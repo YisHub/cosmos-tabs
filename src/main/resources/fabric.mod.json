@@ -1,0 +1,37 @@
+{
+	"schemaVersion": 1,
+	"id": "cosmostabs",
+	"version": "${version}",
+	"name": "Cosmos Tabs",
+	"description": "Ventanas de cofres que se pueden arrastrar, con pestañas para saltar entre los contenedores que abriste cerca.",
+	"authors": [
+		"YisHub"
+	],
+	"contact": {
+		"sources": "https://github.com/YisHub/cosmos-tabs"
+	},
+	"license": "MIT",
+	"icon": "assets/cosmostabs/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.yishub.cosmostabs.CosmosTabs"
+		],
+		"client": [
+			"com.yishub.cosmostabs.client.CosmosTabsClient"
+		]
+	},
+	"mixins": [
+		"cosmostabs.mixins.json",
+		{
+			"config": "cosmostabs.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
