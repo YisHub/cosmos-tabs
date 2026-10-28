@@ -16,6 +16,11 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.MenuProvider;
 import net.minecraft.world.Nameable;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.DispenserMenu;
+import net.minecraft.world.inventory.HopperMenu;
+import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -69,6 +74,15 @@ public final class RecentContainers {
 		if (state.useWithoutItem(level, player, hit).consumesAction()) {
 			sendTabs(player, pos);
 		}
+	}
+
+	/**
+	 * Solo los menus de almacenamiento llevan pestañas. Los hornos y mesas de trabajo quedan
+	 * fuera: otros mods (como Cinematic Interactions) les ponen su propia pantalla al abrirlos.
+	 */
+	public static boolean isStorage(AbstractContainerMenu menu) {
+		return menu instanceof ChestMenu || menu instanceof ShulkerBoxMenu
+				|| menu instanceof DispenserMenu || menu instanceof HopperMenu;
 	}
 
 	public static void forget(ServerPlayer player) {
