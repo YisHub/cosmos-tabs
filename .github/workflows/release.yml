@@ -1,0 +1,32 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+      - name: validate gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'microsoft'
+      - name: build
+        run: chmod +x ./gradlew && ./gradlew build
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          JAR=$(ls build/libs/cosmos-tabs-*.jar | grep -v -- -sources)
+          gh release create "$GITHUB_REF_NAME" "$JAR" \
+            --title "Cosmos Tabs $GITHUB_REF_NAME" \
+            --notes "Para Minecraft 26.3 con Fabric Loader 0.20.1+ y Fabric API. Va en el cliente y en el servidor. Ver el README."
