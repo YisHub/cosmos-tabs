@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -14,24 +15,24 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.MenuProvider;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.Nameable;
-import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ChestMenu;
-import net.minecraft.world.inventory.DispenserMenu;
-import net.minecraft.world.inventory.HopperMenu;
-import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.CrafterBlockEntity;
+import net.minecraft.world.level.block.entity.EnderChestBlockEntity;
+import net.minecraft.world.level.block.entity.RandomizableContainerBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Recuerda, por jugador, los ultimos contenedores que abrio a mano. Solo se ofrecen como
- * pestañas los que siguen dentro del margen que vanilla ya tolera para mantener un menu
- * abierto (alcance de interaccion + 4 bloques, ver Container.stillValidBlockEntity).
+ * Recuerda, por jugador, los ultimos contenedores de almacenamiento que abrio a mano. Solo se
+ * ofrecen como pestañas los que siguen dentro del margen que vanilla ya tolera para mantener un
+ * menu abierto (alcance de interaccion + 4 bloques, ver Container.stillValidBlockEntity).
  */
 public final class RecentContainers {
 	private static final int MAX_TABS = 9;
@@ -43,9 +44,24 @@ public final class RecentContainers {
 
 	private RecentContainers() {}
 
+	/**
+	 * Unica regla para saber si un bloque lleva pestaña: almacenamiento (cofres, barriles, shulkers,
+	 * dispensadores, tolvas, cofres de Ender y cofres de otros mods que extienden la clase vanilla).
+	 * Hornos, mesas de trabajo y el Crafter quedan fuera: otros mods como Cinematic Interactions
+	 * les ponen su propia pantalla y abrirlos desde una pestaña se la saltaria.
+	 */
+	public static boolean isStorage(Level level, BlockPos pos) {
+		BlockEntity be = level.getBlockEntity(pos);
+		return be instanceof EnderChestBlockEntity
+				|| (be instanceof RandomizableContainerBlockEntity && !(be instanceof CrafterBlockEntity));
+	}
+
 	/** Llamado cuando el jugador abre un menu haciendo clic en el bloque {@code pos}. */
 	public static void opened(ServerPlayer player, BlockPos pos) {
 		ServerLevel level = player.level();
+		if (!isStorage(level, pos)) {
+			return;
+		}
 		pos = canonical(level, pos);
 		Entry entry = BY_PLAYER.get(player.getUUID());
 		if (entry == null || entry.dimension() != level.dimension()) {
@@ -59,30 +75,30 @@ public final class RecentContainers {
 		sendTabs(player, pos);
 	}
 
-	/** Pestaña pulsada: abre el contenedor igual que si el jugador le hiciera clic con la mano vacia. */
+	/**
+	 * Pestaña pulsada: abre el contenedor como si el jugador le hiciera clic derecho con la mano
+	 * vacia, pasando por los mismos permisos (espectador, proteccion del spawn y mods de proteccion
+	 * que escuchan UseBlockCallback).
+	 */
 	public static void switchTo(ServerPlayer player, BlockPos pos) {
 		ServerLevel level = player.level();
 		Entry entry = BY_PLAYER.get(player.getUUID());
 		if (entry == null || entry.dimension() != level.dimension() || !entry.positions().contains(pos)) {
 			return;
 		}
-		if (!isAvailable(player, level, pos) || !player.containerMenu.getCarried().isEmpty()) {
+		if (player.isSpectator() || !player.containerMenu.getCarried().isEmpty()
+				|| !isAvailable(player, level, pos) || !level.mayInteract(player, pos)) {
 			return;
 		}
-		BlockState state = level.getBlockState(pos);
 		BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(pos), Direction.UP, pos, false);
-		if (state.useWithoutItem(level, player, hit).consumesAction()) {
+		InteractionResult callback = UseBlockCallback.EVENT.invoker().interact(player, level, InteractionHand.MAIN_HAND, hit);
+		if (callback != InteractionResult.PASS) {
+			// Otro mod se hizo cargo (o lo prohibio): no abrimos nada por nuestra cuenta.
+			return;
+		}
+		if (level.getBlockState(pos).useWithoutItem(level, player, hit).consumesAction()) {
 			sendTabs(player, pos);
 		}
-	}
-
-	/**
-	 * Solo los menus de almacenamiento llevan pestañas. Los hornos y mesas de trabajo quedan
-	 * fuera: otros mods (como Cinematic Interactions) les ponen su propia pantalla al abrirlos.
-	 */
-	public static boolean isStorage(AbstractContainerMenu menu) {
-		return menu instanceof ChestMenu || menu instanceof ShulkerBoxMenu
-				|| menu instanceof DispenserMenu || menu instanceof HopperMenu;
 	}
 
 	public static void forget(ServerPlayer player) {
@@ -109,11 +125,7 @@ public final class RecentContainers {
 	}
 
 	private static boolean isAvailable(ServerPlayer player, ServerLevel level, BlockPos pos) {
-		if (!level.isLoaded(pos) || !player.isWithinBlockInteractionRange(pos, RANGE_BUFFER)) {
-			return false;
-		}
-		MenuProvider provider = level.getBlockState(pos).getMenuProvider(level, pos);
-		return provider != null;
+		return level.isLoaded(pos) && player.isWithinBlockInteractionRange(pos, RANGE_BUFFER) && isStorage(level, pos);
 	}
 
 	/** Las dos mitades de un cofre doble son el mismo contenedor: se guarda siempre la misma. */

@@ -31,7 +31,7 @@ public abstract class ServerPlayerGameModeMixin {
 	private void cosmostabs$recordOpened(ServerPlayer player, Level level, ItemStack itemStack, InteractionHand hand,
 			BlockHitResult hitResult, CallbackInfoReturnable<InteractionResult> cir) {
 		AbstractContainerMenu menu = player.containerMenu;
-		if (menu != this.cosmostabs$menuBefore && RecentContainers.isStorage(menu)) {
+		if (menu != this.cosmostabs$menuBefore && menu != player.inventoryMenu) {
 			RecentContainers.opened(player, hitResult.getBlockPos());
 		}
 		this.cosmostabs$menuBefore = null;

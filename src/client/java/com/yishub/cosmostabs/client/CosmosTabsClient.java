@@ -1,5 +1,6 @@
 package com.yishub.cosmostabs.client;
 
+import com.yishub.cosmostabs.CosmosTabs;
 import com.yishub.cosmostabs.net.TabsPayload;
 import java.util.List;
 import net.fabricmc.api.ClientModInitializer;
@@ -22,6 +23,13 @@ public class CosmosTabsClient implements ClientModInitializer {
 			tabs = List.of();
 			tabsContainerId = -1;
 		});
+
+		if (CosmosTabs.AUDIT) {
+			// Los mods se inicializan antes de que el juego cree la ventana: la auditoria no
+			// necesita pantalla, asi que se hace aqui y se sale sin llegar a abrirla.
+			CosmosTabs.audit();
+			Runtime.getRuntime().halt(0);
+		}
 	}
 
 	/** Las pestañas solo valen para el menu que estaba abierto cuando llegaron. */

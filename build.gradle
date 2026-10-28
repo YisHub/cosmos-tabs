@@ -20,6 +20,15 @@ loom {
 			sourceSet sourceSets.client
 		}
 	}
+
+	// ./gradlew runClient -Paudit  -> aplica todos los mixins de todos los mods y cierra.
+	runs {
+		configureEach {
+			if (project.hasProperty("audit")) {
+				vmArg "-Dcosmostabs.audit=true"
+			}
+		}
+	}
 }
 
 dependencies {
@@ -29,6 +38,9 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// Mods de terceros solo para probar compatibilidad con runClient/runServer (carpeta ignorada por git).
+	runtimeOnly fileTree(dir: "run-mods", include: "*.jar")
 }
 
 processResources {
