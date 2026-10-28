@@ -24,7 +24,8 @@ import net.minecraft.world.level.block.state.BlockState;
  * "pegar" las mueve al contenedor abierto (mover, no duplicar). Todo se valida en el servidor.
  */
 public final class ItemClipboard {
-	private record Clip(ResourceKey<Level> dimension, BlockPos source, List<Integer> slots) {}
+	/** {@code items}: que habia en cada ranura al cortar; al pegar solo se mueve si sigue siendo lo mismo. */
+	private record Clip(ResourceKey<Level> dimension, BlockPos source, List<Integer> slots, List<ItemStack> items) {}
 
 	private static final Map<UUID, Clip> CLIPS = new HashMap<>();
 
@@ -42,8 +43,14 @@ public final class ItemClipboard {
 		if (container == null || slots.isEmpty()) {
 			return;
 		}
-		List<Integer> valid = slots.stream().distinct().filter(i -> i >= 0 && i < container.getContainerSize()).toList();
-		CLIPS.put(player.getUUID(), new Clip(level.dimension(), source, valid));
+		List<Integer> valid = slots.stream().distinct()
+				.filter(i -> i >= 0 && i < container.getContainerSize() && !container.getItem(i).isEmpty()).toList();
+		if (valid.isEmpty()) {
+			// No pisar un corte anterior valido con uno vacio.
+			return;
+		}
+		List<ItemStack> items = valid.stream().map(i -> container.getItem(i).copy()).toList();
+		CLIPS.put(player.getUUID(), new Clip(level.dimension(), source, valid, items));
 		player.sendOverlayMessage(Component.literal(
 				"Cortadas " + valid.size() + " ranura(s) · Ctrl+V en otro contenedor pegado para moverlas"));
 	}
@@ -52,7 +59,11 @@ public final class ItemClipboard {
 		ServerLevel level = player.level();
 		Clip clip = CLIPS.get(player.getUUID());
 		BlockPos target = open(player, side);
-		if (clip == null || target == null) {
+		if (target == null) {
+			return;
+		}
+		if (clip == null) {
+			player.sendOverlayMessage(Component.literal("No hay nada cortado · marca con Ctrl+clic y corta con Ctrl+X"));
 			return;
 		}
 		if (clip.dimension() != level.dimension() || clip.source().equals(target)) {
@@ -72,12 +83,16 @@ public final class ItemClipboard {
 		boolean toShulker = level.getBlockEntity(target) instanceof ShulkerBoxBlockEntity;
 		int movedItems = 0;
 		int leftStacks = 0;
-		for (int slot : clip.slots()) {
+		int changed = 0;
+		for (int n = 0; n < clip.slots().size(); n++) {
+			int slot = clip.slots().get(n);
 			if (slot >= from.getContainerSize()) {
 				continue;
 			}
 			ItemStack stack = from.getItem(slot);
-			if (stack.isEmpty()) {
+			if (stack.isEmpty() || !ItemStack.isSameItemSameComponents(stack, clip.items().get(n))) {
+				// Lo que habia se fue o se cambio por otra cosa desde que lo cortaste: no se toca.
+				changed++;
 				continue;
 			}
 			int before = stack.getCount();
@@ -94,6 +109,9 @@ public final class ItemClipboard {
 		String message = "Movidos " + movedItems + " objeto(s)";
 		if (leftStacks > 0) {
 			message += " · no cabia todo: " + leftStacks + " pila(s) siguen en el origen";
+		}
+		if (changed > 0) {
+			message += " · " + changed + " ranura(s) cambiaron desde que las cortaste y no se movieron";
 		}
 		player.sendOverlayMessage(Component.literal(message));
 	}

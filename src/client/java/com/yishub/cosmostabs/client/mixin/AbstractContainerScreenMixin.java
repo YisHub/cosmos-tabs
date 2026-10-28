@@ -69,6 +69,8 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 	@Unique private boolean cosmostabs$dragging;
 	/** Ranuras marcadas con Ctrl+clic (indices de ranura del menu). */
 	@Unique private final Set<Integer> cosmostabs$selected = new LinkedHashSet<>();
+	/** Ranuras cortadas con Ctrl+X en esta ventana, pendientes de pegar. */
+	@Unique private final Set<Integer> cosmostabs$cut = new LinkedHashSet<>();
 	/** Pestaña pulsada (aun sin soltar) y si ya se esta arrastrando para separarla. */
 	@Unique private int cosmostabs$pressedTab = -1;
 	@Unique private boolean cosmostabs$tabDragging;
@@ -190,6 +192,21 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 				int y = this.topPos + slot.y;
 				graphics.fill(x, y, x + 16, y + 16, 0x704080FF);
 				graphics.outline(x - 1, y - 1, 18, 18, 0xFF4080FF);
+			}
+		}
+		// Ranuras cortadas con Ctrl+X que aun no se pegaron: atenuadas y con borde punteado.
+		for (int index : this.cosmostabs$cut) {
+			if (index < this.menu.slots.size()) {
+				Slot slot = this.menu.slots.get(index);
+				int x = this.leftPos + slot.x;
+				int y = this.topPos + slot.y;
+				graphics.fill(x, y, x + 16, y + 16, 0x90C6C6C6);
+				for (int d = 0; d < 18; d += 4) {
+					graphics.fill(x - 1 + d, y - 1, x + 1 + d, y, 0xFF4080FF);
+					graphics.fill(x - 1 + d, y + 16, x + 1 + d, y + 17, 0xFF4080FF);
+					graphics.fill(x - 1, y - 1 + d, x, y + 1 + d, 0xFF4080FF);
+					graphics.fill(x + 16, y - 1 + d, x + 17, y + 1 + d, 0xFF4080FF);
+				}
 			}
 		}
 
@@ -319,17 +336,22 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 			}
 			cir.setReturnValue(true);
 		} else if (event.isCut()) {
-			// Con dos ventanas, se corta de la ventana de la primera ranura marcada.
+			// Con dos ventanas, se corta de la ventana de la primera ranura marcada que tenga algo.
 			List<Integer> slots = new ArrayList<>();
 			Boolean side = null;
+			this.cosmostabs$cut.clear();
 			for (int index : this.cosmostabs$selected) {
 				Slot slot = this.menu.slots.get(index);
+				if (!slot.hasItem()) {
+					continue;
+				}
 				boolean slotSide = this.menu instanceof DualContainerMenu dual && dual.isSideSlot(slot);
 				if (side == null) {
 					side = slotSide;
 				}
-				if (slot.hasItem() && slotSide == side) {
+				if (slotSide == side) {
 					slots.add(slot.getContainerSlot());
+					this.cosmostabs$cut.add(index);
 				}
 			}
 			if (!slots.isEmpty()) {
@@ -337,7 +359,12 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 			}
 			this.cosmostabs$selected.clear();
 			cir.setReturnValue(true);
+		} else if (event.isCopy() && !this.cosmostabs$selected.isEmpty()) {
+			// Copiar no existe (duplicaria objetos): avisar en vez de no hacer nada.
+			Minecraft.getInstance().gui.hud.setOverlayMessage(Component.literal("Para mover objetos usa Ctrl+X (cortar) y Ctrl+V"), false);
+			cir.setReturnValue(true);
 		} else if (event.isPaste()) {
+			this.cosmostabs$cut.clear();
 			// Con dos ventanas, se pega en la que esta bajo el raton.
 			Minecraft mc = Minecraft.getInstance();
 			double mx = mc.mouseHandler.getScaledXPos(mc.getWindow());
