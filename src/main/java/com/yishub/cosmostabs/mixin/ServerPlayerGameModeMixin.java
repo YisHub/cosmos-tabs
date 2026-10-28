@@ -1,6 +1,6 @@
 package com.yishub.cosmostabs.mixin;
 
-import com.yishub.cosmostabs.server.RecentContainers;
+import com.yishub.cosmostabs.server.ContainerGroups;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerPlayerGameMode;
 import net.minecraft.world.InteractionHand;
@@ -32,7 +32,7 @@ public abstract class ServerPlayerGameModeMixin {
 			BlockHitResult hitResult, CallbackInfoReturnable<InteractionResult> cir) {
 		AbstractContainerMenu menu = player.containerMenu;
 		if (menu != this.cosmostabs$menuBefore && menu != player.inventoryMenu) {
-			RecentContainers.opened(player, hitResult.getBlockPos());
+			ContainerGroups.opened(player, hitResult.getBlockPos());
 		}
 		this.cosmostabs$menuBefore = null;
 	}

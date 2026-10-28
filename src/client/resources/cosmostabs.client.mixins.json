@@ -4,8 +4,10 @@
 	"compatibilityLevel": "JAVA_25",
 	"client": [
 		"AbstractContainerScreenMixin",
+		"ClientPacketListenerMixin",
 		"MouseHandlerMixin",
-		"ScreenMixin"
+		"ScreenMixin",
+		"SlotAccessor"
 	],
 	"injectors": {
 		"defaultRequire": 1

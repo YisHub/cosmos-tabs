@@ -15,12 +15,14 @@ import net.minecraft.world.item.ItemStack;
 public record TabsPayload(List<Tab> tabs) implements CustomPacketPayload {
 	public static final Type<TabsPayload> TYPE = new Type<>(CosmosTabs.id("tabs"));
 
-	public record Tab(BlockPos pos, ItemStack icon, Component name, boolean current) {
+	/** {@code detached}: es el contenedor que esta abierto en la ventana separada. */
+	public record Tab(BlockPos pos, ItemStack icon, Component name, boolean current, boolean detached) {
 		public static final StreamCodec<RegistryFriendlyByteBuf, Tab> STREAM_CODEC = StreamCodec.composite(
 				BlockPos.STREAM_CODEC, Tab::pos,
 				ItemStack.STREAM_CODEC, Tab::icon,
 				ComponentSerialization.STREAM_CODEC, Tab::name,
 				ByteBufCodecs.BOOL, Tab::current,
+				ByteBufCodecs.BOOL, Tab::detached,
 				Tab::new);
 	}
 

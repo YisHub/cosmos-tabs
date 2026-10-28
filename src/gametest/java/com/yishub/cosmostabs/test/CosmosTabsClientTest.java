@@ -3,7 +3,10 @@ package com.yishub.cosmostabs.test;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.Window;
 import com.yishub.cosmostabs.client.CosmosTabsClient;
+import com.yishub.cosmostabs.client.DualContainerScreen;
+import net.minecraft.world.inventory.Slot;
 import com.yishub.cosmostabs.client.MovableWindow;
+import com.yishub.cosmostabs.net.SwitchTabPayload;
 import com.yishub.cosmostabs.net.TabsPayload;
 import com.yishub.cosmostabs.test.mixin.ContainerScreenAccessor;
 import java.awt.image.BufferedImage;
@@ -14,6 +17,7 @@ import java.util.List;
 import java.util.function.Predicate;
 import javax.imageio.ImageIO;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.gametest.v1.TestInput;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
@@ -42,13 +46,14 @@ public class CosmosTabsClientTest implements FabricClientGameTest {
 		try (TestSingleplayerContext sp = ctx.worldBuilder().create()) {
 			sp.getConnection().waitForChunksRender();
 
-			// --- Escenario: 3 cofres con nombre, un barril y un horno alrededor del jugador ---
+			// --- Escenario: un grupo pegado en fila (Cofre A, Cofre B, barril y, pegado al barril, un
+			// horno) y un Cofre C suelto al otro lado del jugador ---
 			BlockPos p = sp.getServer().computeOnServer(s -> s.getPlayerList().getPlayers().getFirst().blockPosition());
 			BlockPos chestA = p.offset(2, 0, -1);
-			BlockPos chestB = p.offset(2, 0, 1);
-			BlockPos barrel = p.offset(-2, 0, 0);
-			BlockPos furnace = p.offset(0, 0, 2);
-			BlockPos chestC = p.offset(0, 0, -2);
+			BlockPos chestB = p.offset(2, 0, 0);
+			BlockPos barrel = p.offset(2, 0, 1);
+			BlockPos furnace = p.offset(2, 0, 2);
+			BlockPos chestC = p.offset(-2, 0, 0);
 			cmd(sp, "fill %s %s minecraft:air", p.offset(-4, 0, -4), p.offset(4, 3, 4));
 			cmd(sp, "fill %s %s minecraft:stone", p.offset(-4, -1, -4), p.offset(4, -1, 4));
 			cmd(sp, "tp @p %d %d %d 0 0", p.getX(), p.getY(), p.getZ());
@@ -66,13 +71,12 @@ public class CosmosTabsClientTest implements FabricClientGameTest {
 			ctx.waitTicks(20);
 			screenshot(ctx, "escenario");
 
-			// --- Abrir contenedores con clic derecho real (pasa por el servidor como un jugador) ---
-			open(ctx, input, chestA, "Cofre A");
-			screenshot(ctx, "cofre-a-primera-vez");
-			close(ctx, input);
-			open(ctx, input, chestB, "Cofre B");
-			close(ctx, input);
-			open(ctx, input, barrel, null);
+			// --- Cofre suelto: sin pestañas, solo la barra para mover la ventana ---
+			open(ctx, input, chestC, "Cofre C");
+			ctx.waitTicks(20);
+			screenshot(ctx, "cofre-suelto-sin-pestanas");
+			List<TabsPayload.Tab> loneTabs = ctx.computeOnClient(CosmosTabsClientTest::tabs);
+			check(loneTabs.isEmpty(), "un cofre suelto no tiene pestañas", names(loneTabs));
 			close(ctx, input);
 
 			// Horno: con Cinematic Interactions abre su escena 3D en vez de la ventana.
@@ -86,30 +90,45 @@ public class CosmosTabsClientTest implements FabricClientGameTest {
 			}
 			ctx.waitTicks(20);
 
-			open(ctx, input, chestC, "Cofre C");
-
-			// --- Pestañas ---
-			waitSoft(ctx, mc -> tabs(mc).size() >= 4, 100);
+			// --- Grupo pegado: pestañas solo para A, B y el barril (ni el horno ni el Cofre C suelto) ---
+			open(ctx, input, chestB, "Cofre B");
+			waitSoft(ctx, mc -> tabs(mc).size() >= 3, 100);
 			List<TabsPayload.Tab> tabs = ctx.computeOnClient(CosmosTabsClientTest::tabs);
-			screenshot(ctx, "pestanas");
-			check(tabs.size() == 4, "hay 4 pestañas (A, B, barril, C)", "pestañas=" + names(tabs));
-			check(tabs.stream().noneMatch(t -> t.icon().is(Items.FURNACE)), "el horno no tiene pestaña", names(tabs));
-			check(tabs.stream().anyMatch(t -> t.current() && t.name().getString().equals("Cofre C")),
-					"la pestaña actual es Cofre C", names(tabs));
+			screenshot(ctx, "pestanas-del-grupo");
+			check(tabs.size() == 3, "el grupo pegado tiene 3 pestañas (A, B, barril)", "pestañas=" + names(tabs));
+			check(tabs.stream().noneMatch(t -> t.icon().is(Items.FURNACE)), "el horno pegado no tiene pestaña", names(tabs));
+			check(indexOf(tabs, "Cofre C") < 0, "el Cofre C suelto no aparece en el grupo", names(tabs));
+			check(tabs.stream().anyMatch(t -> t.current() && t.name().getString().equals("Cofre B")),
+					"la pestaña actual es Cofre B", names(tabs));
 
 			// --- Cambiar de pestaña con clic: Cofre A ---
 			int tabA = indexOf(tabs, "Cofre A");
 			check(tabA >= 0, "existe la pestaña de Cofre A", names(tabs));
 			if (tabA >= 0) {
 				int[] win = window(ctx);
-				clickGui(ctx, input, win[0] + tabA * (TAB_W + 1) + TAB_W / 2, win[1] - 10, InputConstants.MOUSE_BUTTON_LEFT);
+				moveGui(ctx, input, win[0] + tabA * (TAB_W + 1) + TAB_W / 2, win[1] - 10);
+				ctx.waitTick();
+				double[] cursorBefore = ctx.computeOnClient(mc -> new double[] {mc.mouseHandler.xpos(), mc.mouseHandler.ypos()});
+				input.pressMouse(InputConstants.MOUSE_BUTTON_LEFT);
 				boolean switched = waitSoft(ctx, mc -> title(mc).equals("Cofre A"), 100);
 				ctx.waitTicks(10);
 				screenshot(ctx, "cambio-a-cofre-a");
 				check(switched, "clic en la pestaña abre Cofre A", "titulo=" + ctx.computeOnClient(CosmosTabsClientTest::title));
+				double[] cursorAfter = ctx.computeOnClient(mc -> new double[] {mc.mouseHandler.xpos(), mc.mouseHandler.ypos()});
+				boolean grabbed = ctx.computeOnClient(mc -> mc.mouseHandler.isMouseGrabbed());
+				check(!grabbed && cursorAfter[0] == cursorBefore[0] && cursorAfter[1] == cursorBefore[1],
+						"al cambiar de pestaña el raton se queda donde estaba",
+						String.format("antes=(%.0f, %.0f) despues=(%.0f, %.0f) capturado=%s",
+								cursorBefore[0], cursorBefore[1], cursorAfter[0], cursorAfter[1], grabbed));
 				check(ctx.computeOnClient(mc -> tabs(mc).stream().anyMatch(t -> t.current() && t.name().getString().equals("Cofre A"))),
 						"la pestaña actual pasa a ser Cofre A", names(ctx.computeOnClient(CosmosTabsClientTest::tabs)));
 			}
+
+			// --- Anti-trampa: pedir a mano un cofre que no esta pegado tiene que ser rechazado ---
+			ctx.runOnClient(mc -> ClientPlayNetworking.send(new SwitchTabPayload(chestC)));
+			ctx.waitTicks(20);
+			check(ctx.computeOnClient(CosmosTabsClientTest::title).equals("Cofre A"),
+					"el servidor rechaza abrir un cofre que no esta pegado", "titulo=" + ctx.computeOnClient(CosmosTabsClientTest::title));
 
 			// --- Arrastrar la ventana por la barra ---
 			int[] before = window(ctx);
@@ -171,6 +190,93 @@ public class CosmosTabsClientTest implements FabricClientGameTest {
 			screenshot(ctx, "centrada");
 			check(centered[0] == expected[0], "clic derecho en la barra la centra",
 					"x=" + centered[0] + " esperada=" + expected[0]);
+
+			// --- Ctrl+clic + Ctrl+C en Cofre B, pestaña a Cofre A, Ctrl+V: las esmeraldas se mueven ---
+			int[] w = window(ctx);
+			input.holdControl();
+			clickGui(ctx, input, w[0] + 8 + 8, w[1] + 18 + 8, InputConstants.MOUSE_BUTTON_LEFT);
+			input.releaseControl();
+			ctx.waitTicks(2);
+			screenshot(ctx, "esmeraldas-marcadas");
+			input.holdControl();
+			input.pressKey(InputConstants.KEY_C);
+			input.releaseControl();
+			ctx.waitTicks(5);
+			List<TabsPayload.Tab> groupTabs = ctx.computeOnClient(CosmosTabsClientTest::tabs);
+			int idxA = indexOf(groupTabs, "Cofre A");
+			clickGui(ctx, input, w[0] + idxA * (TAB_W + 1) + TAB_W / 2, w[1] - 10, InputConstants.MOUSE_BUTTON_LEFT);
+			waitSoft(ctx, mc -> title(mc).equals("Cofre A"), 100);
+			ctx.waitTicks(5);
+			input.holdControl();
+			input.pressKey(InputConstants.KEY_V);
+			input.releaseControl();
+			ctx.waitTicks(10);
+			screenshot(ctx, "esmeraldas-pegadas-en-a");
+			int[] counts = sp.getServer().computeOnServer(s -> {
+				var level = s.overworld();
+				return new int[] {countIn(level.getBlockEntity(chestA), Items.EMERALD), countIn(level.getBlockEntity(chestB), Items.EMERALD)};
+			});
+			check(counts[0] == 7 && counts[1] == 0, "Ctrl+C / Ctrl+V mueve las esmeraldas de B a A",
+					"esmeraldas en A=" + counts[0] + " en B=" + counts[1]);
+
+			// --- Dos ventanas: arrastrar la pestaña de Cofre B fuera de la barra (con Cofre A abierto) ---
+			int[] wa = window(ctx);
+			List<TabsPayload.Tab> tabsA = ctx.computeOnClient(CosmosTabsClientTest::tabs);
+			int idxB = indexOf(tabsA, "Cofre B");
+			int startX = wa[0] + idxB * (TAB_W + 1) + TAB_W / 2;
+			int startY = wa[1] - 10;
+			moveGui(ctx, input, startX, startY);
+			input.holdMouse(InputConstants.MOUSE_BUTTON_LEFT);
+			ctx.waitTick();
+			for (int i = 1; i <= 10; i++) {
+				moveGui(ctx, input, startX + 20 * i, startY + 6 * i);
+				ctx.waitTick();
+			}
+			screenshot(ctx, "arrastrando-pestana-b");
+			input.releaseMouse(InputConstants.MOUSE_BUTTON_LEFT);
+			boolean dual = waitSoft(ctx, mc -> mc.gui.screen() instanceof DualContainerScreen, 100);
+			ctx.waitTicks(10);
+			screenshot(ctx, "dos-ventanas");
+			String sideTitle = ctx.computeOnClient(mc -> mc.gui.screen() instanceof DualContainerScreen s
+					? s.getMenu().sideTitle().getString() : "-");
+			check(dual && sideTitle.equals("Cofre B") && ctx.computeOnClient(CosmosTabsClientTest::title).equals("Cofre A"),
+					"arrastrar la pestaña afuera abre Cofre B en una segunda ventana",
+					"doble=" + dual + " separada=" + sideTitle);
+
+			if (dual) {
+				// Arrastrar los diamantes de A (ranura 0) a la primera ranura de la ventana de B.
+				int[] diamondSlot = slotOnScreen(ctx, 0);
+				int[] sideSlot = slotOnScreen(ctx, ctx.computeOnClient(mc -> ((DualContainerScreen) mc.gui.screen()).getMenu().sideStart()));
+				clickGui(ctx, input, diamondSlot[0], diamondSlot[1], InputConstants.MOUSE_BUTTON_LEFT);
+				ctx.waitTicks(3);
+				clickGui(ctx, input, sideSlot[0], sideSlot[1], InputConstants.MOUSE_BUTTON_LEFT);
+				ctx.waitTicks(10);
+				screenshot(ctx, "diamantes-a-la-otra-ventana");
+				int[] diamonds = sp.getServer().computeOnServer(s -> {
+					var level = s.overworld();
+					return new int[] {countIn(level.getBlockEntity(chestA), Items.DIAMOND), countIn(level.getBlockEntity(chestB), Items.DIAMOND)};
+				});
+				check(diamonds[0] == 0 && diamonds[1] == 5, "se pueden pasar objetos de una ventana a la otra con el raton",
+						"diamantes en A=" + diamonds[0] + " en B=" + diamonds[1]);
+
+				// La x de la ventana separada la vuelve a juntar.
+				int[] closeBtn = ctx.computeOnClient(mc -> {
+					DualContainerScreen s = (DualContainerScreen) mc.gui.screen();
+					Slot first = s.getMenu().slots.get(s.getMenu().sideStart());
+					int[] offset = {((MovableWindow) s).cosmostabs$offsetX(), ((MovableWindow) s).cosmostabs$offsetY()};
+					int left = ((ContainerScreenAccessor) s).cosmostabsTest$leftPos() + offset[0];
+					int top = ((ContainerScreenAccessor) s).cosmostabsTest$topPos() + offset[1];
+					// La ventana separada empieza 8 px a la izquierda y 18 px arriba de su primera ranura.
+					return new int[] {left + first.x - 8 + 176 - 5, top + first.y - 18 - 5};
+				});
+				clickGui(ctx, input, closeBtn[0], closeBtn[1], InputConstants.MOUSE_BUTTON_LEFT);
+				boolean single = waitSoft(ctx, mc -> mc.gui.screen() instanceof AbstractContainerScreen<?>
+						&& !(mc.gui.screen() instanceof DualContainerScreen), 100);
+				ctx.waitTicks(10);
+				screenshot(ctx, "ventanas-juntadas");
+				check(single && ctx.computeOnClient(CosmosTabsClientTest::title).equals("Cofre A"),
+						"la x de la ventana separada vuelve a una sola ventana", "titulo=" + ctx.computeOnClient(CosmosTabsClientTest::title));
+			}
 			close(ctx, input);
 		}
 
@@ -258,6 +364,30 @@ public class CosmosTabsClientTest implements FabricClientGameTest {
 
 	private static String title(Minecraft mc) {
 		return mc.gui.screen() == null ? "" : mc.gui.screen().getTitle().getString();
+	}
+
+	/** Centro de la ranura {@code index} del menu abierto, en coordenadas de pantalla. */
+	private static int[] slotOnScreen(ClientGameTestContext ctx, int index) {
+		return ctx.computeOnClient(mc -> {
+			AbstractContainerScreen<?> s = (AbstractContainerScreen<?>) mc.gui.screen();
+			Slot slot = s.getMenu().slots.get(index);
+			int left = ((ContainerScreenAccessor) s).cosmostabsTest$leftPos() + ((MovableWindow) s).cosmostabs$offsetX();
+			int top = ((ContainerScreenAccessor) s).cosmostabsTest$topPos() + ((MovableWindow) s).cosmostabs$offsetY();
+			return new int[] {left + slot.x + 8, top + slot.y + 8};
+		});
+	}
+
+	private static int countIn(Object blockEntity, net.minecraft.world.item.Item item) {
+		if (!(blockEntity instanceof net.minecraft.world.Container container)) {
+			return -1;
+		}
+		int n = 0;
+		for (int i = 0; i < container.getContainerSize(); i++) {
+			if (container.getItem(i).is(item)) {
+				n += container.getItem(i).getCount();
+			}
+		}
+		return n;
 	}
 
 	private static String names(List<TabsPayload.Tab> tabs) {

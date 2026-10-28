@@ -7,8 +7,23 @@ import com.yishub.cosmostabs.client.MovableWindow;
 import com.yishub.cosmostabs.client.WindowPositions;
 import com.yishub.cosmostabs.net.SwitchTabPayload;
 import com.yishub.cosmostabs.net.TabsPayload;
+import com.yishub.cosmostabs.client.DualContainerScreen;
+import com.yishub.cosmostabs.menu.DualContainerMenu;
+import com.yishub.cosmostabs.net.CopyItemsPayload;
+import com.yishub.cosmostabs.net.DetachTabPayload;
+import com.yishub.cosmostabs.net.PasteItemsPayload;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.DispenserMenu;
+import net.minecraft.world.inventory.HopperMenu;
+import net.minecraft.world.inventory.ShulkerBoxMenu;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -52,6 +67,16 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 	@Unique private double cosmostabs$offsetX;
 	@Unique private double cosmostabs$offsetY;
 	@Unique private boolean cosmostabs$dragging;
+	/** Ranuras marcadas con Ctrl+clic (indices de ranura del menu). */
+	@Unique private final Set<Integer> cosmostabs$selected = new LinkedHashSet<>();
+	/** Pestaña pulsada (aun sin soltar) y si ya se esta arrastrando para separarla. */
+	@Unique private int cosmostabs$pressedTab = -1;
+	@Unique private boolean cosmostabs$tabDragging;
+	@Unique private double cosmostabs$pressX;
+	@Unique private double cosmostabs$pressY;
+
+	@Shadow
+	protected abstract boolean isHovering(int left, int top, int w, int h, double xm, double ym);
 
 	@Override
 	public int cosmostabs$offsetX() {
@@ -82,6 +107,28 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 	@Unique
 	private List<TabsPayload.Tab> cosmostabs$tabs() {
 		return CosmosTabsClient.tabsFor(this.menu.containerId);
+	}
+
+	/** Ctrl+C / Ctrl+V solo en ventanas de almacenamiento y si el servidor tiene el mod. */
+	@Unique
+	private boolean cosmostabs$clipboardEnabled() {
+		AbstractContainerMenu m = this.menu;
+		return this.cosmostabs$enabled()
+				&& (m instanceof ChestMenu || m instanceof ShulkerBoxMenu || m instanceof DispenserMenu || m instanceof HopperMenu
+						|| m instanceof DualContainerMenu)
+				&& ClientPlayNetworking.canSend(CopyItemsPayload.TYPE);
+	}
+
+	/** Ranura del contenedor (no del inventario del jugador) bajo el raton, o null. */
+	@Unique
+	private Slot cosmostabs$containerSlotAt(double mx, double my) {
+		for (Slot slot : this.menu.slots) {
+			if (!(slot.container instanceof Inventory) && slot.isActive()
+					&& this.isHovering(slot.x, slot.y, 16, 16, mx, my)) {
+				return slot;
+			}
+		}
+		return null;
 	}
 
 	@Unique
@@ -134,6 +181,18 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 			return;
 		}
 		Font font = Minecraft.getInstance().font;
+
+		// Ranuras marcadas con Ctrl+clic.
+		for (int index : this.cosmostabs$selected) {
+			if (index < this.menu.slots.size()) {
+				Slot slot = this.menu.slots.get(index);
+				int x = this.leftPos + slot.x;
+				int y = this.topPos + slot.y;
+				graphics.fill(x, y, x + 16, y + 16, 0x704080FF);
+				graphics.outline(x - 1, y - 1, 18, 18, 0xFF4080FF);
+			}
+		}
+
 		List<TabsPayload.Tab> tabs = this.cosmostabs$tabs();
 		int right = this.leftPos + this.imageWidth;
 		int tabsEnd = this.leftPos + tabs.size() * (TAB_W + 1);
@@ -156,18 +215,30 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 			TabsPayload.Tab tab = tabs.get(i);
 			int x = this.leftPos + i * (TAB_W + 1);
 			int y = this.topPos - TAB_H;
-			int bg = tab.current() ? 0xFFC6C6C6 : (i == hovered ? 0xFFA8A8A8 : 0xFF8B8B8B);
+			// Actual: del color de la ventana. Separada: azulada. Resto: gris (mas claro con el raton encima).
+			int bg = tab.current() ? 0xFFC6C6C6 : tab.detached() ? 0xFF7A8FB0 : (i == hovered ? 0xFFA8A8A8 : 0xFF8B8B8B);
 			graphics.fill(x, y, x + TAB_W, this.topPos + (tab.current() ? 1 : 0), bg);
 			graphics.fill(x, y, x + TAB_W, y + 1, 0xFFFFFFFF);
 			graphics.fill(x, y, x + 1, this.topPos, 0xFFFFFFFF);
 			graphics.fill(x + TAB_W - 1, y, x + TAB_W, this.topPos, 0xFF373737);
 			graphics.item(tab.icon(), x + 3, y + 2);
 		}
-		if (hovered >= 0) {
-			graphics.setTooltipForNextFrame(font, tabs.get(hovered).name(), mouseX, mouseY);
+		if (this.cosmostabs$tabDragging && this.cosmostabs$pressedTab < tabs.size()) {
+			// Pestaña "fantasma" que sigue al raton mientras la arrastras fuera para separarla.
+			int gx = mouseX - TAB_W / 2;
+			int gy = mouseY - TAB_H / 2;
+			graphics.fill(gx, gy, gx + TAB_W, gy + TAB_H, 0xC0C6C6C6);
+			graphics.outline(gx, gy, TAB_W, TAB_H, 0xFF4080FF);
+			graphics.item(tabs.get(this.cosmostabs$pressedTab).icon(), gx + 3, gy + 2);
+		} else if (hovered >= 0) {
+			TabsPayload.Tab tab = tabs.get(hovered);
+			graphics.setTooltipForNextFrame(font, tab.current() || tab.detached() ? tab.name()
+					: tab.name().copy().append(Component.literal(" · arrastra afuera para abrir al lado")), mouseX, mouseY);
 		} else if (gripHover && !this.cosmostabs$dragging) {
 			graphics.setTooltipForNextFrame(font,
-					Component.literal("Arrastra para mover · clic derecho: centrar"), mouseX, mouseY);
+					Component.literal(this.cosmostabs$clipboardEnabled()
+							? "Arrastra: mover · clic der.: centrar · Ctrl+clic y Ctrl+C/V: pasar objetos"
+							: "Arrastra para mover · clic derecho: centrar"), mouseX, mouseY);
 		}
 	}
 
@@ -176,16 +247,28 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 		CosmosTabs.debug("clic ({}, {}) boton={} desplazamiento=({}, {}) barra={} pestaña={}", event.x(), event.y(),
 				event.button(), this.cosmostabs$offsetX(), this.cosmostabs$offsetY(),
 				this.cosmostabs$inBar(event.x(), event.y()), this.cosmostabs$tabAt(event.x(), event.y()));
+		if (event.hasControlDown() && event.button() == InputConstants.MOUSE_BUTTON_LEFT && this.cosmostabs$clipboardEnabled()
+				&& this.menu.getCarried().isEmpty()) {
+			Slot slot = this.cosmostabs$containerSlotAt(event.x(), event.y());
+			if (slot != null) {
+				if (!this.cosmostabs$selected.remove(slot.index) && slot.hasItem()) {
+					this.cosmostabs$selected.add(slot.index);
+				}
+				cir.setReturnValue(true);
+				return;
+			}
+		}
 		if (!this.cosmostabs$enabled() || !this.cosmostabs$inBar(event.x(), event.y())) {
 			return;
 		}
 		cir.setReturnValue(true);
 		int tab = this.cosmostabs$tabAt(event.x(), event.y());
 		if (tab >= 0) {
-			TabsPayload.Tab target = this.cosmostabs$tabs().get(tab);
-			if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && !target.current() && this.menu.getCarried().isEmpty()) {
-				CosmosTabs.debug("enviando cambio a {}", target.pos().toShortString());
-				ClientPlayNetworking.send(new SwitchTabPayload(target.pos()));
+			// Se decide al soltar: clic = cambiar de pestaña, arrastrar afuera = abrir en otra ventana.
+			if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && this.menu.getCarried().isEmpty()) {
+				this.cosmostabs$pressedTab = tab;
+				this.cosmostabs$pressX = event.x();
+				this.cosmostabs$pressY = event.y();
 			}
 		} else if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
 			this.cosmostabs$setOffset(0, 0);
@@ -195,11 +278,86 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 		}
 	}
 
+	/** Soltar una pestaña pulsada: sin moverla = cambiar a ella; arrastrada fuera de la barra = abrirla al lado. */
+	@Unique
+	private void cosmostabs$releaseTab(double mx, double my) {
+		List<TabsPayload.Tab> tabs = this.cosmostabs$tabs();
+		int index = this.cosmostabs$pressedTab;
+		boolean dragged = this.cosmostabs$tabDragging;
+		this.cosmostabs$pressedTab = -1;
+		this.cosmostabs$tabDragging = false;
+		if (index >= tabs.size() || !this.menu.getCarried().isEmpty()) {
+			return;
+		}
+		TabsPayload.Tab target = tabs.get(index);
+		if (!dragged) {
+			if (!target.current()) {
+				CosmosTabs.debug("enviando cambio a {}", target.pos().toShortString());
+				CosmosTabsClient.markSwitchPending();
+				ClientPlayNetworking.send(new SwitchTabPayload(target.pos()));
+			}
+		} else if (!this.cosmostabs$inBar(mx, my) && !target.current() && ClientPlayNetworking.canSend(DetachTabPayload.TYPE)) {
+			// La ventana nueva aparece donde soltaste la pestaña (su barra bajo el raton).
+			CosmosTabsClient.setSidePanelPosition((int) mx - this.leftPos - TAB_W, (int) my - this.topPos + GRIP_H / 2);
+			CosmosTabsClient.markSwitchPending();
+			ClientPlayNetworking.send(new DetachTabPayload(target.pos()));
+		}
+	}
+
+	/** Ctrl+A marca todo, Ctrl+C / Ctrl+X recuerda lo marcado, Ctrl+V lo mueve a este contenedor. */
+	@Inject(method = "keyPressed", at = @At("HEAD"), cancellable = true)
+	private void cosmostabs$clipboardKeys(KeyEvent event, CallbackInfoReturnable<Boolean> cir) {
+		if (!this.cosmostabs$clipboardEnabled()) {
+			return;
+		}
+		if (event.isSelectAll()) {
+			this.cosmostabs$selected.clear();
+			for (Slot slot : this.menu.slots) {
+				if (!(slot.container instanceof Inventory) && slot.hasItem()) {
+					this.cosmostabs$selected.add(slot.index);
+				}
+			}
+			cir.setReturnValue(true);
+		} else if (event.isCopy() || event.isCut()) {
+			// Con dos ventanas, se copia de la ventana de la primera ranura marcada.
+			List<Integer> slots = new ArrayList<>();
+			Boolean side = null;
+			for (int index : this.cosmostabs$selected) {
+				Slot slot = this.menu.slots.get(index);
+				boolean slotSide = this.menu instanceof DualContainerMenu dual && dual.isSideSlot(slot);
+				if (side == null) {
+					side = slotSide;
+				}
+				if (slot.hasItem() && slotSide == side) {
+					slots.add(slot.getContainerSlot());
+				}
+			}
+			if (!slots.isEmpty()) {
+				ClientPlayNetworking.send(new CopyItemsPayload(slots, side));
+			}
+			this.cosmostabs$selected.clear();
+			cir.setReturnValue(true);
+		} else if (event.isPaste()) {
+			// Con dos ventanas, se pega en la que esta bajo el raton.
+			Minecraft mc = Minecraft.getInstance();
+			double mx = mc.mouseHandler.getScaledXPos(mc.getWindow());
+			double my = mc.mouseHandler.getScaledYPos(mc.getWindow());
+			boolean side = (Object) this instanceof DualContainerScreen dual && dual.isOverSide(mx, my);
+			ClientPlayNetworking.send(new PasteItemsPayload(side));
+			cir.setReturnValue(true);
+		}
+	}
+
 	@Inject(method = "mouseDragged", at = @At("HEAD"), cancellable = true)
 	private void cosmostabs$dragWindow(MouseButtonEvent event, double dx, double dy, CallbackInfoReturnable<Boolean> cir) {
 		if (this.cosmostabs$dragging) {
 			// Se usan los deltas: la posicion del evento ya viene corregida con el desplazamiento que estamos cambiando.
 			this.cosmostabs$setOffset(this.cosmostabs$offsetX + dx, this.cosmostabs$offsetY + dy);
+			cir.setReturnValue(true);
+		} else if (this.cosmostabs$pressedTab >= 0) {
+			if (Math.abs(event.x() - this.cosmostabs$pressX) + Math.abs(event.y() - this.cosmostabs$pressY) > 4) {
+				this.cosmostabs$tabDragging = true;
+			}
 			cir.setReturnValue(true);
 		}
 	}
@@ -209,6 +367,9 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 		if (this.cosmostabs$dragging) {
 			this.cosmostabs$dragging = false;
 			this.cosmostabs$saveOffset();
+			cir.setReturnValue(true);
+		} else if (this.cosmostabs$pressedTab >= 0) {
+			this.cosmostabs$releaseTab(event.x(), event.y());
 			cir.setReturnValue(true);
 		} else if (this.cosmostabs$enabled() && this.cosmostabs$inBar(event.x(), event.y())) {
 			// Que soltar el clic sobre la barra no cuente como "clic fuera" (tiraria el objeto que llevas).

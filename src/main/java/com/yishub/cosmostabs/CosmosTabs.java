@@ -1,8 +1,14 @@
 package com.yishub.cosmostabs;
 
+import com.yishub.cosmostabs.menu.CosmosMenus;
+import com.yishub.cosmostabs.net.AttachTabPayload;
+import com.yishub.cosmostabs.net.CopyItemsPayload;
+import com.yishub.cosmostabs.net.DetachTabPayload;
+import com.yishub.cosmostabs.net.PasteItemsPayload;
 import com.yishub.cosmostabs.net.SwitchTabPayload;
 import com.yishub.cosmostabs.net.TabsPayload;
-import com.yishub.cosmostabs.server.RecentContainers;
+import com.yishub.cosmostabs.server.ContainerGroups;
+import com.yishub.cosmostabs.server.ItemClipboard;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
@@ -26,9 +32,26 @@ public class CosmosTabs implements ModInitializer {
 		PayloadTypeRegistry.clientboundPlay().register(TabsPayload.TYPE, TabsPayload.STREAM_CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(SwitchTabPayload.TYPE, SwitchTabPayload.STREAM_CODEC);
 
+		PayloadTypeRegistry.serverboundPlay().register(CopyItemsPayload.TYPE, CopyItemsPayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay().register(PasteItemsPayload.TYPE, PasteItemsPayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay().register(DetachTabPayload.TYPE, DetachTabPayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay().register(AttachTabPayload.TYPE, AttachTabPayload.STREAM_CODEC);
+		CosmosMenus.init();
+
 		ServerPlayNetworking.registerGlobalReceiver(SwitchTabPayload.TYPE,
-				(payload, context) -> RecentContainers.switchTo(context.player(), payload.pos()));
-		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> RecentContainers.forget(handler.getPlayer()));
+				(payload, context) -> ContainerGroups.switchTo(context.player(), payload.pos()));
+		ServerPlayNetworking.registerGlobalReceiver(CopyItemsPayload.TYPE,
+				(payload, context) -> ItemClipboard.copy(context.player(), payload.slots(), payload.side()));
+		ServerPlayNetworking.registerGlobalReceiver(PasteItemsPayload.TYPE,
+				(payload, context) -> ItemClipboard.paste(context.player(), payload.side()));
+		ServerPlayNetworking.registerGlobalReceiver(DetachTabPayload.TYPE,
+				(payload, context) -> ContainerGroups.detach(context.player(), payload.pos()));
+		ServerPlayNetworking.registerGlobalReceiver(AttachTabPayload.TYPE,
+				(payload, context) -> ContainerGroups.attach(context.player()));
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+			ContainerGroups.forget(handler.getPlayer());
+			ItemClipboard.forget(handler.getPlayer());
+		});
 
 		if (AUDIT) {
 			ServerLifecycleEvents.SERVER_STARTED.register(server -> {
