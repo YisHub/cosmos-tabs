@@ -31,6 +31,13 @@ loom {
 	}
 }
 
+sourceSets {
+	gametest {
+		compileClasspath += sourceSets.main.output + sourceSets.client.output + sourceSets.client.compileClasspath
+		runtimeClasspath += sourceSets.main.output + sourceSets.client.output + sourceSets.client.runtimeClasspath
+	}
+}
+
 dependencies {
 	// To change the versions see the gradle.properties file
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
@@ -41,6 +48,24 @@ dependencies {
 
 	// Mods de terceros solo para probar compatibilidad con runClient/runServer (carpeta ignorada por git).
 	runtimeOnly fileTree(dir: "run-mods", include: "*.jar")
+
+	gametestImplementation "net.fabricmc.fabric-api:fabric-client-gametest-api-v1:${project.client_gametest_api_version}"
+}
+
+// Mod de prueba automatica (src/gametest): se empaqueta aparte y solo se usa en la instancia de prueba,
+// nunca se distribuye. `./gradlew testMods` deja en build/test-mods todo lo que hay que copiar.
+tasks.register("gametestJar", Jar) {
+	from sourceSets.gametest.output
+	archiveClassifier = "test"
+}
+
+tasks.register("testMods", Copy) {
+	from tasks.named("gametestJar")
+	from tasks.named("jar")
+	from(configurations.gametestRuntimeClasspath) {
+		include "fabric-client-gametest-api-v1-*.jar"
+	}
+	into layout.buildDirectory.dir("test-mods")
 }
 
 processResources {

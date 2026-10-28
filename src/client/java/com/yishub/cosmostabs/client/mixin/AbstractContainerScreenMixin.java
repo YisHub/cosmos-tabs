@@ -1,6 +1,9 @@
 package com.yishub.cosmostabs.client.mixin;
 
+import com.mojang.blaze3d.platform.InputConstants;
+import com.yishub.cosmostabs.CosmosTabs;
 import com.yishub.cosmostabs.client.CosmosTabsClient;
+import com.yishub.cosmostabs.client.MovableWindow;
 import com.yishub.cosmostabs.client.WindowPositions;
 import com.yishub.cosmostabs.net.SwitchTabPayload;
 import com.yishub.cosmostabs.net.TabsPayload;
@@ -9,8 +12,6 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.AbstractWidget;
-import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.gui.screens.inventory.AbstractRecipeBookScreen;
@@ -28,12 +29,16 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * Convierte las pantallas de contenedores en una ventana con una barra superior:
- * la barra se arrastra para mover la ventana (clic derecho la vuelve al centro)
- * y, si el servidor tiene el mod, muestra una pestaña por cada contenedor cercano.
+ * Convierte las pantallas de contenedores en una ventana con una barra superior: la barra se
+ * arrastra para mover la ventana (clic derecho la vuelve al centro) y, si el servidor tiene el
+ * mod, muestra una pestaña por cada contenedor cercano.
+ *
+ * <p>La ventana no cambia su posicion interna (leftPos/topPos): ScreenMixin la dibuja trasladada y
+ * MouseHandlerMixin le resta el desplazamiento al raton. Aqui todo se calcula en esas coordenadas
+ * "como si estuviera centrada".
  */
 @Mixin(AbstractContainerScreen.class)
-public abstract class AbstractContainerScreenMixin {
+public abstract class AbstractContainerScreenMixin implements MovableWindow {
 	@Unique private static final int TAB_W = 22;
 	@Unique private static final int TAB_H = 20;
 	@Unique private static final int GRIP_H = 10;
@@ -44,9 +49,19 @@ public abstract class AbstractContainerScreenMixin {
 	@Shadow protected int leftPos;
 	@Shadow protected int topPos;
 
+	@Unique private double cosmostabs$offsetX;
+	@Unique private double cosmostabs$offsetY;
 	@Unique private boolean cosmostabs$dragging;
-	@Unique private double cosmostabs$grabX;
-	@Unique private double cosmostabs$grabY;
+
+	@Override
+	public int cosmostabs$offsetX() {
+		return (int) Math.round(this.cosmostabs$offsetX);
+	}
+
+	@Override
+	public int cosmostabs$offsetY() {
+		return (int) Math.round(this.cosmostabs$offsetY);
+	}
 
 	@Unique
 	private boolean cosmostabs$enabled() {
@@ -75,40 +90,25 @@ public abstract class AbstractContainerScreenMixin {
 	}
 
 	@Inject(method = "init", at = @At("TAIL"))
-	private void cosmostabs$applyOffset(CallbackInfo ci) {
+	private void cosmostabs$loadOffset(CallbackInfo ci) {
 		if (!this.cosmostabs$enabled()) {
 			return;
 		}
 		int[] offset = WindowPositions.get(this.cosmostabs$key());
-		this.cosmostabs$moveTo(this.leftPos + offset[0], this.topPos + offset[1], false);
+		this.cosmostabs$setOffset(offset[0], offset[1]);
 	}
 
-	/** Mueve la ventana (y los botones de la pantalla) a la posicion pedida, sin salirse de la pantalla. */
+	/** Fija el desplazamiento sin dejar que la ventana (ni su barra) se salga de la pantalla. */
 	@Unique
-	private void cosmostabs$moveTo(int x, int y, boolean moveWidgets) {
+	private void cosmostabs$setOffset(double dx, double dy) {
 		Screen screen = this.cosmostabs$screen();
-		x = Math.max(0, Math.min(x, screen.width - this.imageWidth));
-		y = Math.max(TAB_H, Math.min(y, screen.height - this.imageHeight));
-		int dx = x - this.leftPos;
-		int dy = y - this.topPos;
-		this.leftPos = x;
-		this.topPos = y;
-		if (moveWidgets && (dx != 0 || dy != 0)) {
-			for (GuiEventListener child : screen.children()) {
-				if (child instanceof AbstractWidget widget) {
-					widget.setX(widget.getX() + dx);
-					widget.setY(widget.getY() + dy);
-				}
-			}
-		}
+		this.cosmostabs$offsetX = Math.max(-this.leftPos, Math.min(dx, screen.width - this.imageWidth - this.leftPos));
+		this.cosmostabs$offsetY = Math.max(TAB_H - this.topPos, Math.min(dy, screen.height - this.imageHeight - this.topPos));
 	}
 
 	@Unique
 	private void cosmostabs$saveOffset() {
-		Screen screen = this.cosmostabs$screen();
-		WindowPositions.set(this.cosmostabs$key(),
-				this.leftPos - (screen.width - this.imageWidth) / 2,
-				this.topPos - (screen.height - this.imageHeight) / 2);
+		WindowPositions.set(this.cosmostabs$key(), this.cosmostabs$offsetX(), this.cosmostabs$offsetY());
 	}
 
 	@Unique
@@ -164,8 +164,7 @@ public abstract class AbstractContainerScreenMixin {
 			graphics.item(tab.icon(), x + 3, y + 2);
 		}
 		if (hovered >= 0) {
-			Component name = tabs.get(hovered).name();
-			graphics.setTooltipForNextFrame(font, name, mouseX, mouseY);
+			graphics.setTooltipForNextFrame(font, tabs.get(hovered).name(), mouseX, mouseY);
 		} else if (gripHover && !this.cosmostabs$dragging) {
 			graphics.setTooltipForNextFrame(font,
 					Component.literal("Arrastra para mover · clic derecho: centrar"), mouseX, mouseY);
@@ -174,6 +173,9 @@ public abstract class AbstractContainerScreenMixin {
 
 	@Inject(method = "mouseClicked", at = @At("HEAD"), cancellable = true)
 	private void cosmostabs$clickBar(MouseButtonEvent event, boolean doubleClick, CallbackInfoReturnable<Boolean> cir) {
+		CosmosTabs.debug("clic ({}, {}) boton={} desplazamiento=({}, {}) barra={} pestaña={}", event.x(), event.y(),
+				event.button(), this.cosmostabs$offsetX(), this.cosmostabs$offsetY(),
+				this.cosmostabs$inBar(event.x(), event.y()), this.cosmostabs$tabAt(event.x(), event.y()));
 		if (!this.cosmostabs$enabled() || !this.cosmostabs$inBar(event.x(), event.y())) {
 			return;
 		}
@@ -181,25 +183,23 @@ public abstract class AbstractContainerScreenMixin {
 		int tab = this.cosmostabs$tabAt(event.x(), event.y());
 		if (tab >= 0) {
 			TabsPayload.Tab target = this.cosmostabs$tabs().get(tab);
-			if (event.button() == 0 && !target.current() && this.menu.getCarried().isEmpty()) {
+			if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && !target.current() && this.menu.getCarried().isEmpty()) {
+				CosmosTabs.debug("enviando cambio a {}", target.pos().toShortString());
 				ClientPlayNetworking.send(new SwitchTabPayload(target.pos()));
 			}
-		} else if (event.button() == 1) {
-			Screen screen = this.cosmostabs$screen();
-			this.cosmostabs$moveTo((screen.width - this.imageWidth) / 2, (screen.height - this.imageHeight) / 2, true);
+		} else if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+			this.cosmostabs$setOffset(0, 0);
 			this.cosmostabs$saveOffset();
-		} else if (event.button() == 0) {
+		} else if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 			this.cosmostabs$dragging = true;
-			this.cosmostabs$grabX = event.x() - this.leftPos;
-			this.cosmostabs$grabY = event.y() - this.topPos;
 		}
 	}
 
 	@Inject(method = "mouseDragged", at = @At("HEAD"), cancellable = true)
 	private void cosmostabs$dragWindow(MouseButtonEvent event, double dx, double dy, CallbackInfoReturnable<Boolean> cir) {
 		if (this.cosmostabs$dragging) {
-			this.cosmostabs$moveTo((int) Math.round(event.x() - this.cosmostabs$grabX),
-					(int) Math.round(event.y() - this.cosmostabs$grabY), true);
+			// Se usan los deltas: la posicion del evento ya viene corregida con el desplazamiento que estamos cambiando.
+			this.cosmostabs$setOffset(this.cosmostabs$offsetX + dx, this.cosmostabs$offsetY + dy);
 			cir.setReturnValue(true);
 		}
 	}

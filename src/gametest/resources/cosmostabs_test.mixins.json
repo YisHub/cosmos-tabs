@@ -1,0 +1,12 @@
+{
+	"required": true,
+	"package": "com.yishub.cosmostabs.test.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"ContainerScreenAccessor",
+		"MinecraftFocusMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

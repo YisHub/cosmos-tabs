@@ -3,7 +3,9 @@
 	"package": "com.yishub.cosmostabs.client.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
-		"AbstractContainerScreenMixin"
+		"AbstractContainerScreenMixin",
+		"MouseHandlerMixin",
+		"ScreenMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

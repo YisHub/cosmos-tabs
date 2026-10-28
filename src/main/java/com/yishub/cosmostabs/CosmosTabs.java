@@ -41,6 +41,15 @@ public class CosmosTabs implements ModInitializer {
 	/** Prueba de compatibilidad (-Dcosmostabs.audit=true): aplica ya todos los mixins de todos los mods. */
 	public static final boolean AUDIT = Boolean.getBoolean("cosmostabs.audit");
 
+	/** -Dcosmostabs.debug=true: explica en el log cada clic en pestaña y por que se acepta o rechaza. */
+	public static final boolean DEBUG = Boolean.getBoolean("cosmostabs.debug");
+
+	public static void debug(String message, Object... args) {
+		if (DEBUG) {
+			LOGGER.info("[cosmostabs-debug] " + message, args);
+		}
+	}
+
 	public static void audit() {
 		LOGGER.info("[cosmostabs-audit] aplicando todos los mixins...");
 		try {

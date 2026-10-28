@@ -1,5 +1,6 @@
 package com.yishub.cosmostabs.server;
 
+import com.yishub.cosmostabs.CosmosTabs;
 import com.yishub.cosmostabs.net.TabsPayload;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -83,20 +84,27 @@ public final class RecentContainers {
 	public static void switchTo(ServerPlayer player, BlockPos pos) {
 		ServerLevel level = player.level();
 		Entry entry = BY_PLAYER.get(player.getUUID());
+		CosmosTabs.debug("switchTo {} pide {}", player.getName().getString(), pos.toShortString());
 		if (entry == null || entry.dimension() != level.dimension() || !entry.positions().contains(pos)) {
+			CosmosTabs.debug("rechazado: no esta entre sus contenedores recientes {}", entry == null ? "-" : entry.positions());
 			return;
 		}
 		if (player.isSpectator() || !player.containerMenu.getCarried().isEmpty()
 				|| !isAvailable(player, level, pos) || !level.mayInteract(player, pos)) {
+			CosmosTabs.debug("rechazado: espectador={} lleva={} disponible={} mayInteract={}", player.isSpectator(),
+					!player.containerMenu.getCarried().isEmpty(), isAvailable(player, level, pos), level.mayInteract(player, pos));
 			return;
 		}
 		BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(pos), Direction.UP, pos, false);
 		InteractionResult callback = UseBlockCallback.EVENT.invoker().interact(player, level, InteractionHand.MAIN_HAND, hit);
 		if (callback != InteractionResult.PASS) {
 			// Otro mod se hizo cargo (o lo prohibio): no abrimos nada por nuestra cuenta.
+			CosmosTabs.debug("rechazado: UseBlockCallback devolvio {}", callback);
 			return;
 		}
-		if (level.getBlockState(pos).useWithoutItem(level, player, hit).consumesAction()) {
+		InteractionResult result = level.getBlockState(pos).useWithoutItem(level, player, hit);
+		CosmosTabs.debug("useWithoutItem -> {}", result);
+		if (result.consumesAction()) {
 			sendTabs(player, pos);
 		}
 	}

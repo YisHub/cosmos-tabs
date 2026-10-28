@@ -1,0 +1,21 @@
+{
+	"schemaVersion": 1,
+	"id": "cosmostabs_test",
+	"version": "1.0.0",
+	"name": "Cosmos Tabs - prueba automatica",
+	"description": "Prueba de punta a punta de Cosmos Tabs con capturas. Solo para la instancia de prueba.",
+	"license": "MIT",
+	"environment": "client",
+	"entrypoints": {
+		"fabric-client-gametest": [
+			"com.yishub.cosmostabs.test.CosmosTabsClientTest"
+		]
+	},
+	"mixins": [
+		"cosmostabs_test.mixins.json"
+	],
+	"depends": {
+		"cosmostabs": "*",
+		"fabric-client-gametest-api-v1": "*"
+	}
+}
