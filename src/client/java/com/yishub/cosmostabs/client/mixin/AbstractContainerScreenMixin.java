@@ -17,6 +17,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.minecraft.client.input.InputWithModifiers;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.ChestMenu;
@@ -67,6 +68,10 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 	@Unique private double cosmostabs$offsetX;
 	@Unique private double cosmostabs$offsetY;
 	@Unique private boolean cosmostabs$dragging;
+	@Unique private double cosmostabs$grabRealX;
+	@Unique private double cosmostabs$grabRealY;
+	@Unique private double cosmostabs$grabOffsetX;
+	@Unique private double cosmostabs$grabOffsetY;
 	/** Ranuras marcadas con Ctrl+clic (indices de ranura del menu). */
 	@Unique private final Set<Integer> cosmostabs$selected = new LinkedHashSet<>();
 	/** Ranuras cortadas con Ctrl+X en esta ventana, pendientes de pegar. */
@@ -119,6 +124,22 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 				&& (m instanceof ChestMenu || m instanceof ShulkerBoxMenu || m instanceof DispenserMenu || m instanceof HopperMenu
 						|| m instanceof DualContainerMenu)
 				&& ClientPlayNetworking.canSend(CutItemsPayload.TYPE);
+	}
+
+	/**
+	 * Ctrl pulsado: segun el evento o segun el estado actual del teclado (algunos origenes de
+	 * eventos, como la prueba automatica, no rellenan los modificadores).
+	 */
+	@Unique
+	private static boolean cosmostabs$ctrl(InputWithModifiers event) {
+		return event.hasControlDownWithQuirk()
+				|| InputConstants.isKeyDown(InputConstants.KEY_LCONTROL) || InputConstants.isKeyDown(InputConstants.KEY_RCONTROL);
+	}
+
+	/** Ctrl + letra (segun la distribucion del teclado), sin Shift ni Alt. */
+	@Unique
+	private static boolean cosmostabs$shortcut(KeyEvent event, char letter) {
+		return event.shortcutKey() == letter && cosmostabs$ctrl(event) && !event.hasShiftDown() && !event.hasAltDown();
 	}
 
 	/** Ranura del contenedor (no del inventario del jugador) bajo el raton, o null. */
@@ -264,7 +285,7 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 		CosmosTabs.debug("clic ({}, {}) boton={} desplazamiento=({}, {}) barra={} pestaña={}", event.x(), event.y(),
 				event.button(), this.cosmostabs$offsetX(), this.cosmostabs$offsetY(),
 				this.cosmostabs$inBar(event.x(), event.y()), this.cosmostabs$tabAt(event.x(), event.y()));
-		if (event.hasControlDown() && event.button() == InputConstants.MOUSE_BUTTON_LEFT && this.cosmostabs$clipboardEnabled()
+		if (cosmostabs$ctrl(event) && event.button() == InputConstants.MOUSE_BUTTON_LEFT && this.cosmostabs$clipboardEnabled()
 				&& this.menu.getCarried().isEmpty()) {
 			Slot slot = this.cosmostabs$containerSlotAt(event.x(), event.y());
 			if (slot != null) {
@@ -292,6 +313,11 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 			this.cosmostabs$saveOffset();
 		} else if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
 			this.cosmostabs$dragging = true;
+			// Punto agarrado en coordenadas reales de pantalla (las del evento vienen sin el desplazamiento).
+			this.cosmostabs$grabRealX = event.x() + this.cosmostabs$offsetX;
+			this.cosmostabs$grabRealY = event.y() + this.cosmostabs$offsetY;
+			this.cosmostabs$grabOffsetX = this.cosmostabs$offsetX;
+			this.cosmostabs$grabOffsetY = this.cosmostabs$offsetY;
 		}
 	}
 
@@ -327,7 +353,7 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 		if (!this.cosmostabs$clipboardEnabled()) {
 			return;
 		}
-		if (event.isSelectAll()) {
+		if (cosmostabs$shortcut(event, 'a')) {
 			this.cosmostabs$selected.clear();
 			for (Slot slot : this.menu.slots) {
 				if (!(slot.container instanceof Inventory) && slot.hasItem()) {
@@ -335,7 +361,7 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 				}
 			}
 			cir.setReturnValue(true);
-		} else if (event.isCut()) {
+		} else if (cosmostabs$shortcut(event, 'x')) {
 			// Con dos ventanas, se corta de la ventana de la primera ranura marcada que tenga algo.
 			List<Integer> slots = new ArrayList<>();
 			Boolean side = null;
@@ -359,11 +385,11 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 			}
 			this.cosmostabs$selected.clear();
 			cir.setReturnValue(true);
-		} else if (event.isCopy() && !this.cosmostabs$selected.isEmpty()) {
+		} else if (cosmostabs$shortcut(event, 'c') && !this.cosmostabs$selected.isEmpty()) {
 			// Copiar no existe (duplicaria objetos): avisar en vez de no hacer nada.
 			Minecraft.getInstance().gui.hud.setOverlayMessage(Component.literal("Para mover objetos usa Ctrl+X (cortar) y Ctrl+V"), false);
 			cir.setReturnValue(true);
-		} else if (event.isPaste()) {
+		} else if (cosmostabs$shortcut(event, 'v')) {
 			this.cosmostabs$cut.clear();
 			// Con dos ventanas, se pega en la que esta bajo el raton.
 			Minecraft mc = Minecraft.getInstance();
@@ -378,8 +404,11 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 	@Inject(method = "mouseDragged", at = @At("HEAD"), cancellable = true)
 	private void cosmostabs$dragWindow(MouseButtonEvent event, double dx, double dy, CallbackInfoReturnable<Boolean> cir) {
 		if (this.cosmostabs$dragging) {
-			// Se usan los deltas: la posicion del evento ya viene corregida con el desplazamiento que estamos cambiando.
-			this.cosmostabs$setOffset(this.cosmostabs$offsetX + dx, this.cosmostabs$offsetY + dy);
+			// Posicion absoluta: la ventana sigue al raton aunque se pierda o junte algun evento de movimiento.
+			double realX = event.x() + this.cosmostabs$offsetX;
+			double realY = event.y() + this.cosmostabs$offsetY;
+			this.cosmostabs$setOffset(this.cosmostabs$grabOffsetX + realX - this.cosmostabs$grabRealX,
+					this.cosmostabs$grabOffsetY + realY - this.cosmostabs$grabRealY);
 			cir.setReturnValue(true);
 		} else if (this.cosmostabs$pressedTab >= 0) {
 			if (Math.abs(event.x() - this.cosmostabs$pressX) + Math.abs(event.y() - this.cosmostabs$pressY) > 4) {

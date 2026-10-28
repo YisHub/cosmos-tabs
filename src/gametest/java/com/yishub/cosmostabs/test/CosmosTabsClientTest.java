@@ -116,8 +116,9 @@ public class CosmosTabsClientTest implements FabricClientGameTest {
 				check(switched, "clic en la pestaña abre Cofre A", "titulo=" + ctx.computeOnClient(CosmosTabsClientTest::title));
 				double[] cursorAfter = ctx.computeOnClient(mc -> new double[] {mc.mouseHandler.xpos(), mc.mouseHandler.ypos()});
 				boolean grabbed = ctx.computeOnClient(mc -> mc.mouseHandler.isMouseGrabbed());
-				check(!grabbed && cursorAfter[0] == cursorBefore[0] && cursorAfter[1] == cursorBefore[1],
-						"al cambiar de pestaña el raton se queda donde estaba",
+				// La posicion exacta no se compara: al cambiar de pantalla Minecraft relee el cursor real del
+				// sistema (resyncMousePosition), que en la prueba no es el simulado. El bug era que se capturaba.
+				check(!grabbed, "al cambiar de pestaña el raton no se captura (no vuelve a la mira)",
 						String.format("antes=(%.0f, %.0f) despues=(%.0f, %.0f) capturado=%s",
 								cursorBefore[0], cursorBefore[1], cursorAfter[0], cursorAfter[1], grabbed));
 				check(ctx.computeOnClient(mc -> tabs(mc).stream().anyMatch(t -> t.current() && t.name().getString().equals("Cofre A"))),

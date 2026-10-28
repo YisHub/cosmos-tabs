@@ -102,6 +102,8 @@ public class DualContainerScreen extends AbstractContainerScreen<DualContainerMe
 				this.attach();
 			} else {
 				this.draggingSide = true;
+				this.grabX = event.x() - this.sideX;
+				this.grabY = event.y() - this.sideY;
 			}
 			return true;
 		}
@@ -111,21 +113,15 @@ public class DualContainerScreen extends AbstractContainerScreen<DualContainerMe
 	@Override
 	public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
 		if (this.draggingSide) {
-			// Deltas acumulados en doble para no perder fracciones con escalas de interfaz grandes.
-			this.dragRestX += dx;
-			this.dragRestY += dy;
-			int stepX = (int) this.dragRestX;
-			int stepY = (int) this.dragRestY;
-			this.dragRestX -= stepX;
-			this.dragRestY -= stepY;
-			this.placeSide(this.sideX + stepX, this.sideY + stepY);
+			// Posicion absoluta respecto a donde se agarro la barra.
+			this.placeSide((int) Math.round(event.x() - this.grabX), (int) Math.round(event.y() - this.grabY));
 			return true;
 		}
 		return super.mouseDragged(event, dx, dy);
 	}
 
-	private double dragRestX;
-	private double dragRestY;
+	private double grabX;
+	private double grabY;
 
 	@Override
 	public boolean mouseReleased(MouseButtonEvent event) {
