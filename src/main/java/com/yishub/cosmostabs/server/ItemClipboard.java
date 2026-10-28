@@ -20,7 +20,7 @@ import net.minecraft.world.level.block.entity.ShulkerBoxBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
- * Ctrl+C / Ctrl+V entre contenedores del mismo grupo. "Copiar" solo recuerda que ranuras marcaste;
+ * Ctrl+X / Ctrl+V (cortar y pegar) entre contenedores del mismo grupo. "Cortar" recuerda que ranuras marcaste;
  * "pegar" las mueve al contenedor abierto (mover, no duplicar). Todo se valida en el servidor.
  */
 public final class ItemClipboard {
@@ -35,7 +35,7 @@ public final class ItemClipboard {
 		return side ? ContainerGroups.side(player) : ContainerGroups.current(player);
 	}
 
-	public static void copy(ServerPlayer player, List<Integer> slots, boolean side) {
+	public static void cut(ServerPlayer player, List<Integer> slots, boolean side) {
 		ServerLevel level = player.level();
 		BlockPos source = open(player, side);
 		Container container = source == null ? null : containerAt(player, level, source);
@@ -45,7 +45,7 @@ public final class ItemClipboard {
 		List<Integer> valid = slots.stream().distinct().filter(i -> i >= 0 && i < container.getContainerSize()).toList();
 		CLIPS.put(player.getUUID(), new Clip(level.dimension(), source, valid));
 		player.sendOverlayMessage(Component.literal(
-				"Copiadas " + valid.size() + " ranura(s) · Ctrl+V en otro contenedor pegado para moverlas"));
+				"Cortadas " + valid.size() + " ranura(s) · Ctrl+V en otro contenedor pegado para moverlas"));
 	}
 
 	public static void paste(ServerPlayer player, boolean side) {

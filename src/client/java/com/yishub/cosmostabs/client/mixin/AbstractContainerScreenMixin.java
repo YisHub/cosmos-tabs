@@ -9,7 +9,7 @@ import com.yishub.cosmostabs.net.SwitchTabPayload;
 import com.yishub.cosmostabs.net.TabsPayload;
 import com.yishub.cosmostabs.client.DualContainerScreen;
 import com.yishub.cosmostabs.menu.DualContainerMenu;
-import com.yishub.cosmostabs.net.CopyItemsPayload;
+import com.yishub.cosmostabs.net.CutItemsPayload;
 import com.yishub.cosmostabs.net.DetachTabPayload;
 import com.yishub.cosmostabs.net.PasteItemsPayload;
 import java.util.ArrayList;
@@ -109,14 +109,14 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 		return CosmosTabsClient.tabsFor(this.menu.containerId);
 	}
 
-	/** Ctrl+C / Ctrl+V solo en ventanas de almacenamiento y si el servidor tiene el mod. */
+	/** Ctrl+X / Ctrl+V solo en ventanas de almacenamiento y si el servidor tiene el mod. */
 	@Unique
 	private boolean cosmostabs$clipboardEnabled() {
 		AbstractContainerMenu m = this.menu;
 		return this.cosmostabs$enabled()
 				&& (m instanceof ChestMenu || m instanceof ShulkerBoxMenu || m instanceof DispenserMenu || m instanceof HopperMenu
 						|| m instanceof DualContainerMenu)
-				&& ClientPlayNetworking.canSend(CopyItemsPayload.TYPE);
+				&& ClientPlayNetworking.canSend(CutItemsPayload.TYPE);
 	}
 
 	/** Ranura del contenedor (no del inventario del jugador) bajo el raton, o null. */
@@ -237,7 +237,7 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 		} else if (gripHover && !this.cosmostabs$dragging) {
 			graphics.setTooltipForNextFrame(font,
 					Component.literal(this.cosmostabs$clipboardEnabled()
-							? "Arrastra: mover · clic der.: centrar · Ctrl+clic y Ctrl+C/V: pasar objetos"
+							? "Arrastra: mover · clic der.: centrar · Ctrl+clic, Ctrl+X y Ctrl+V: pasar objetos"
 							: "Arrastra para mover · clic derecho: centrar"), mouseX, mouseY);
 		}
 	}
@@ -304,7 +304,7 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 		}
 	}
 
-	/** Ctrl+A marca todo, Ctrl+C / Ctrl+X recuerda lo marcado, Ctrl+V lo mueve a este contenedor. */
+	/** Ctrl+A marca todo, Ctrl+X corta lo marcado, Ctrl+V lo mueve a este contenedor. */
 	@Inject(method = "keyPressed", at = @At("HEAD"), cancellable = true)
 	private void cosmostabs$clipboardKeys(KeyEvent event, CallbackInfoReturnable<Boolean> cir) {
 		if (!this.cosmostabs$clipboardEnabled()) {
@@ -318,8 +318,8 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 				}
 			}
 			cir.setReturnValue(true);
-		} else if (event.isCopy() || event.isCut()) {
-			// Con dos ventanas, se copia de la ventana de la primera ranura marcada.
+		} else if (event.isCut()) {
+			// Con dos ventanas, se corta de la ventana de la primera ranura marcada.
 			List<Integer> slots = new ArrayList<>();
 			Boolean side = null;
 			for (int index : this.cosmostabs$selected) {
@@ -333,7 +333,7 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 				}
 			}
 			if (!slots.isEmpty()) {
-				ClientPlayNetworking.send(new CopyItemsPayload(slots, side));
+				ClientPlayNetworking.send(new CutItemsPayload(slots, side));
 			}
 			this.cosmostabs$selected.clear();
 			cir.setReturnValue(true);

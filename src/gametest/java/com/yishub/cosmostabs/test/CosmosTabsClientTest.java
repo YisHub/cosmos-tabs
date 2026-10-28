@@ -191,7 +191,7 @@ public class CosmosTabsClientTest implements FabricClientGameTest {
 			check(centered[0] == expected[0], "clic derecho en la barra la centra",
 					"x=" + centered[0] + " esperada=" + expected[0]);
 
-			// --- Ctrl+clic + Ctrl+C en Cofre B, pestaña a Cofre A, Ctrl+V: las esmeraldas se mueven ---
+			// --- Ctrl+clic + Ctrl+X en Cofre B, pestaña a Cofre A, Ctrl+V: las esmeraldas se mueven ---
 			int[] w = window(ctx);
 			input.holdControl();
 			clickGui(ctx, input, w[0] + 8 + 8, w[1] + 18 + 8, InputConstants.MOUSE_BUTTON_LEFT);
@@ -199,7 +199,7 @@ public class CosmosTabsClientTest implements FabricClientGameTest {
 			ctx.waitTicks(2);
 			screenshot(ctx, "esmeraldas-marcadas");
 			input.holdControl();
-			input.pressKey(InputConstants.KEY_C);
+			input.pressKey(InputConstants.KEY_X);
 			input.releaseControl();
 			ctx.waitTicks(5);
 			List<TabsPayload.Tab> groupTabs = ctx.computeOnClient(CosmosTabsClientTest::tabs);
@@ -216,7 +216,7 @@ public class CosmosTabsClientTest implements FabricClientGameTest {
 				var level = s.overworld();
 				return new int[] {countIn(level.getBlockEntity(chestA), Items.EMERALD), countIn(level.getBlockEntity(chestB), Items.EMERALD)};
 			});
-			check(counts[0] == 7 && counts[1] == 0, "Ctrl+C / Ctrl+V mueve las esmeraldas de B a A",
+			check(counts[0] == 7 && counts[1] == 0, "Ctrl+X / Ctrl+V mueve las esmeraldas de B a A",
 					"esmeraldas en A=" + counts[0] + " en B=" + counts[1]);
 
 			// --- Dos ventanas: arrastrar la pestaña de Cofre B fuera de la barra (con Cofre A abierto) ---

@@ -2,7 +2,7 @@ package com.yishub.cosmostabs;
 
 import com.yishub.cosmostabs.menu.CosmosMenus;
 import com.yishub.cosmostabs.net.AttachTabPayload;
-import com.yishub.cosmostabs.net.CopyItemsPayload;
+import com.yishub.cosmostabs.net.CutItemsPayload;
 import com.yishub.cosmostabs.net.DetachTabPayload;
 import com.yishub.cosmostabs.net.PasteItemsPayload;
 import com.yishub.cosmostabs.net.SwitchTabPayload;
@@ -32,7 +32,7 @@ public class CosmosTabs implements ModInitializer {
 		PayloadTypeRegistry.clientboundPlay().register(TabsPayload.TYPE, TabsPayload.STREAM_CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(SwitchTabPayload.TYPE, SwitchTabPayload.STREAM_CODEC);
 
-		PayloadTypeRegistry.serverboundPlay().register(CopyItemsPayload.TYPE, CopyItemsPayload.STREAM_CODEC);
+		PayloadTypeRegistry.serverboundPlay().register(CutItemsPayload.TYPE, CutItemsPayload.STREAM_CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(PasteItemsPayload.TYPE, PasteItemsPayload.STREAM_CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(DetachTabPayload.TYPE, DetachTabPayload.STREAM_CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(AttachTabPayload.TYPE, AttachTabPayload.STREAM_CODEC);
@@ -40,8 +40,8 @@ public class CosmosTabs implements ModInitializer {
 
 		ServerPlayNetworking.registerGlobalReceiver(SwitchTabPayload.TYPE,
 				(payload, context) -> ContainerGroups.switchTo(context.player(), payload.pos()));
-		ServerPlayNetworking.registerGlobalReceiver(CopyItemsPayload.TYPE,
-				(payload, context) -> ItemClipboard.copy(context.player(), payload.slots(), payload.side()));
+		ServerPlayNetworking.registerGlobalReceiver(CutItemsPayload.TYPE,
+				(payload, context) -> ItemClipboard.cut(context.player(), payload.slots(), payload.side()));
 		ServerPlayNetworking.registerGlobalReceiver(PasteItemsPayload.TYPE,
 				(payload, context) -> ItemClipboard.paste(context.player(), payload.side()));
 		ServerPlayNetworking.registerGlobalReceiver(DetachTabPayload.TYPE,
