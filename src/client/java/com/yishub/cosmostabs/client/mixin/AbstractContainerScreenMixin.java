@@ -58,6 +58,9 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 	@Unique private static final int TAB_W = 22;
 	@Unique private static final int TAB_H = 20;
 	@Unique private static final int GRIP_H = 10;
+	/** Ancho de cada flecha de pagina y minimo de barra libre que queda para arrastrar la ventana. */
+	@Unique private static final int ARROW_W = 11;
+	@Unique private static final int MIN_GRIP = 16;
 
 	@Shadow @Final protected int imageWidth;
 	@Shadow @Final protected int imageHeight;
@@ -81,6 +84,9 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 	@Unique private boolean cosmostabs$tabDragging;
 	@Unique private double cosmostabs$pressX;
 	@Unique private double cosmostabs$pressY;
+	/** Pagina de pestañas visible; se elige una sola vez, al llegar las pestañas de esta ventana. */
+	@Unique private int cosmostabs$page;
+	@Unique private boolean cosmostabs$pageChosen;
 
 	@Shadow
 	protected abstract boolean isHovering(int left, int top, int w, int h, double xm, double ym);
@@ -187,7 +193,86 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 				&& my >= this.topPos - this.cosmostabs$barHeight() && my < this.topPos;
 	}
 
-	/** Indice de la pestaña bajo el raton, o -1. */
+	/**
+	 * Pestañas por pagina: todas si entran en el ancho de la ventana dejando sitio para arrastrarla;
+	 * si no, las que entran junto a las dos flechas de pagina.
+	 */
+	@Unique
+	private int cosmostabs$perPage() {
+		int total = this.cosmostabs$tabs().size();
+		if (total * (TAB_W + 1) + MIN_GRIP <= this.imageWidth) {
+			return Math.max(total, 1);
+		}
+		return Math.max(1, (this.imageWidth - MIN_GRIP - 2 * ARROW_W) / (TAB_W + 1));
+	}
+
+	@Unique
+	private int cosmostabs$pages() {
+		int per = this.cosmostabs$perPage();
+		return Math.max(1, (this.cosmostabs$tabs().size() + per - 1) / per);
+	}
+
+	/**
+	 * Pagina visible. La primera vez que hay pestañas se muestra la del contenedor abierto; despues
+	 * se respeta la que elija el jugador aunque el servidor reenvie las pestañas.
+	 */
+	@Unique
+	private int cosmostabs$page() {
+		List<TabsPayload.Tab> tabs = this.cosmostabs$tabs();
+		if (!this.cosmostabs$pageChosen && !tabs.isEmpty()) {
+			this.cosmostabs$pageChosen = true;
+			int current = 0;
+			for (int i = 0; i < tabs.size(); i++) {
+				if (tabs.get(i).current()) {
+					current = i;
+				}
+			}
+			this.cosmostabs$page = current / this.cosmostabs$perPage();
+		}
+		return Math.max(0, Math.min(this.cosmostabs$page, this.cosmostabs$pages() - 1));
+	}
+
+	@Unique
+	private void cosmostabs$turnPage(int delta) {
+		this.cosmostabs$page = Math.max(0, Math.min(this.cosmostabs$page() + delta, this.cosmostabs$pages() - 1));
+	}
+
+	/** X donde empiezan las flechas (a continuacion del hueco de una pagina llena, para que no salten). */
+	@Unique
+	private int cosmostabs$arrowsX() {
+		return this.leftPos + this.cosmostabs$perPage() * (TAB_W + 1);
+	}
+
+	/** Flecha bajo el raton: -1 pagina anterior, 1 siguiente, 0 ninguna. */
+	@Unique
+	private int cosmostabs$arrowAt(double mx, double my) {
+		if (this.cosmostabs$pages() <= 1 || my < this.topPos - TAB_H || my >= this.topPos) {
+			return 0;
+		}
+		int x = this.cosmostabs$arrowsX();
+		if (mx >= x && mx < x + ARROW_W) {
+			return -1;
+		}
+		return mx >= x + ARROW_W && mx < x + 2 * ARROW_W ? 1 : 0;
+	}
+
+	/**
+	 * Donde empieza la zona de arrastre: despues de las pestañas o, con paginas, de las flechas.
+	 * El hueco de una ultima pagina incompleta no es zona de arrastre.
+	 */
+	@Unique
+	private int cosmostabs$gripStart() {
+		return this.cosmostabs$pages() > 1
+				? this.cosmostabs$arrowsX() + 2 * ARROW_W
+				: this.leftPos + this.cosmostabs$tabs().size() * (TAB_W + 1);
+	}
+
+	@Unique
+	private boolean cosmostabs$onGrip(double mx, double my) {
+		return this.cosmostabs$inBar(mx, my) && mx >= this.cosmostabs$gripStart();
+	}
+
+	/** Indice (en la lista completa) de la pestaña bajo el raton, o -1. */
 	@Unique
 	private int cosmostabs$tabAt(double mx, double my) {
 		if (my < this.topPos - TAB_H || my >= this.topPos || mx < this.leftPos) {
@@ -195,7 +280,9 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 		}
 		int i = (int) ((mx - this.leftPos) / (TAB_W + 1));
 		boolean onGap = (mx - this.leftPos) % (TAB_W + 1) >= TAB_W;
-		return i < this.cosmostabs$tabs().size() && !onGap ? i : -1;
+		int per = this.cosmostabs$perPage();
+		int index = this.cosmostabs$page() * per + i;
+		return i < per && index < this.cosmostabs$tabs().size() && !onGap ? index : -1;
 	}
 
 	@Inject(method = "extractContents", at = @At("TAIL"))
@@ -233,12 +320,17 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 
 		List<TabsPayload.Tab> tabs = this.cosmostabs$tabs();
 		int right = this.leftPos + this.imageWidth;
-		int tabsEnd = this.leftPos + tabs.size() * (TAB_W + 1);
+		int pages = this.cosmostabs$pages();
+		int page = this.cosmostabs$page();
+		int per = this.cosmostabs$perPage();
+		int first = page * per;
+		int last = Math.min(tabs.size(), first + per);
+		int tabsEnd = this.cosmostabs$gripStart();
+		int arrow = this.cosmostabs$arrowAt(mouseX, mouseY);
 
 		// Zona de arrastre: lo que queda de barra a la derecha de las pestañas.
 		int gripTop = this.topPos - GRIP_H;
-		boolean gripHover = this.cosmostabs$dragging
-				|| (this.cosmostabs$inBar(mouseX, mouseY) && this.cosmostabs$tabAt(mouseX, mouseY) < 0);
+		boolean gripHover = this.cosmostabs$dragging || this.cosmostabs$onGrip(mouseX, mouseY);
 		if (tabsEnd < right) {
 			graphics.fill(tabsEnd, gripTop, right, this.topPos, gripHover ? 0xFF6F6F6F : 0xFF555555);
 			graphics.outline(tabsEnd, gripTop, right - tabsEnd, GRIP_H, 0xFF373737);
@@ -248,10 +340,22 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 			}
 		}
 
+		if (pages > 1) {
+			// Flechas de pagina: grises si no hay pagina hacia ese lado.
+			for (int d = -1; d <= 1; d += 2) {
+				int x = this.cosmostabs$arrowsX() + (d < 0 ? 0 : ARROW_W);
+				int y = this.topPos - TAB_H;
+				boolean enabled = d < 0 ? page > 0 : page < pages - 1;
+				graphics.fill(x, y, x + ARROW_W, this.topPos, enabled && arrow == d ? 0xFFA8A8A8 : 0xFF8B8B8B);
+				graphics.outline(x, y, ARROW_W, TAB_H, 0xFF373737);
+				graphics.centeredText(font, d < 0 ? "<" : ">", x + ARROW_W / 2 + 1, y + 6, enabled ? 0xFFFFFFFF : 0xFF5A5A5A);
+			}
+		}
+
 		int hovered = this.cosmostabs$tabAt(mouseX, mouseY);
-		for (int i = 0; i < tabs.size(); i++) {
+		for (int i = first; i < last; i++) {
 			TabsPayload.Tab tab = tabs.get(i);
-			int x = this.leftPos + i * (TAB_W + 1);
+			int x = this.leftPos + (i - first) * (TAB_W + 1);
 			int y = this.topPos - TAB_H;
 			// Actual: del color de la ventana. Separada: azulada. Resto: gris (mas claro con el raton encima).
 			int bg = tab.current() ? 0xFFC6C6C6 : tab.detached() ? 0xFF7A8FB0 : (i == hovered ? 0xFFA8A8A8 : 0xFF8B8B8B);
@@ -268,6 +372,9 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 			graphics.fill(gx, gy, gx + TAB_W, gy + TAB_H, 0xC0C6C6C6);
 			graphics.outline(gx, gy, TAB_W, TAB_H, 0xFF4080FF);
 			graphics.item(tabs.get(this.cosmostabs$pressedTab).icon(), gx + 3, gy + 2);
+		} else if (arrow != 0) {
+			graphics.setTooltipForNextFrame(font, Component.literal("Página " + (page + 1) + " de " + pages
+					+ " · también con la rueda del mouse sobre la barra"), mouseX, mouseY);
 		} else if (hovered >= 0) {
 			TabsPayload.Tab tab = tabs.get(hovered);
 			graphics.setTooltipForNextFrame(font, tab.current() || tab.detached() ? tab.name()
@@ -300,6 +407,13 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 			return;
 		}
 		cir.setReturnValue(true);
+		int arrow = this.cosmostabs$arrowAt(event.x(), event.y());
+		if (arrow != 0) {
+			if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+				this.cosmostabs$turnPage(arrow);
+			}
+			return;
+		}
 		int tab = this.cosmostabs$tabAt(event.x(), event.y());
 		if (tab >= 0) {
 			// Se decide al soltar: clic = cambiar de pestaña, arrastrar afuera = abrir en otra ventana.
@@ -308,6 +422,8 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 				this.cosmostabs$pressX = event.x();
 				this.cosmostabs$pressY = event.y();
 			}
+		} else if (!this.cosmostabs$onGrip(event.x(), event.y())) {
+			// Hueco vacio de una pagina incompleta: no hace nada.
 		} else if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
 			this.cosmostabs$setOffset(0, 0);
 			this.cosmostabs$saveOffset();
@@ -397,6 +513,15 @@ public abstract class AbstractContainerScreenMixin implements MovableWindow {
 			double my = mc.mouseHandler.getScaledYPos(mc.getWindow());
 			boolean side = (Object) this instanceof DualContainerScreen dual && dual.isOverSide(mx, my);
 			ClientPlayNetworking.send(new PasteItemsPayload(side));
+			cir.setReturnValue(true);
+		}
+	}
+
+	/** Rueda del mouse sobre la barra: pasar de pagina de pestañas. */
+	@Inject(method = "mouseScrolled", at = @At("HEAD"), cancellable = true)
+	private void cosmostabs$scrollTabs(double mx, double my, double scrollX, double scrollY, CallbackInfoReturnable<Boolean> cir) {
+		if (this.cosmostabs$enabled() && this.cosmostabs$pages() > 1 && this.cosmostabs$inBar(mx, my) && scrollY != 0) {
+			this.cosmostabs$turnPage(scrollY > 0 ? -1 : 1);
 			cir.setReturnValue(true);
 		}
 	}

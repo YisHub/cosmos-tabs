@@ -1,9 +1,8 @@
 package com.yishub.cosmostabs.client;
 
 import com.yishub.cosmostabs.CosmosTabs;
-import com.yishub.cosmostabs.menu.CosmosMenus;
 import com.yishub.cosmostabs.menu.DualContainerMenu;
-import net.minecraft.client.gui.screens.MenuScreens;
+import com.yishub.cosmostabs.net.DualOpenPayload;
 import com.yishub.cosmostabs.net.TabsPayload;
 import java.util.List;
 import net.fabricmc.api.ClientModInitializer;
@@ -16,6 +15,16 @@ public class CosmosTabsClient implements ClientModInitializer {
 	private static int tabsContainerId = -1;
 
 	private static final String SIDE_KEY = "cosmostabs:ventana-separada";
+
+	/** Aviso de que el proximo menu que abra el servidor es doble. */
+	private static DualOpenPayload pendingDual;
+
+	/** El aviso pendiente si corresponde a este menu (y se consume), o null. */
+	public static DualOpenPayload takeDual(int containerId) {
+		DualOpenPayload dual = pendingDual;
+		pendingDual = null;
+		return dual != null && dual.containerId() == containerId ? dual : null;
+	}
 
 	/** Donde va la ventana separada, relativa a la principal. */
 	public static int[] sidePanelPosition() {
@@ -32,7 +41,7 @@ public class CosmosTabsClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		WindowPositions.load();
-		MenuScreens.register(CosmosMenus.DUAL, DualContainerScreen::new);
+		ClientPlayNetworking.registerGlobalReceiver(DualOpenPayload.TYPE, (payload, context) -> pendingDual = payload);
 		ClientPlayNetworking.registerGlobalReceiver(TabsPayload.TYPE, (payload, context) -> {
 			tabs = payload.tabs();
 			tabsContainerId = context.player().containerMenu.containerId;
@@ -40,6 +49,7 @@ public class CosmosTabsClient implements ClientModInitializer {
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
 			tabs = List.of();
 			tabsContainerId = -1;
+			pendingDual = null;
 		});
 
 		if (CosmosTabs.AUDIT) {

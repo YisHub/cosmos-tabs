@@ -14,17 +14,22 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import java.util.function.Predicate;
 import javax.imageio.ImageIO;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.gametest.v1.TestInput;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
+import net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerConnection;
+import net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext;
+import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -281,6 +286,8 @@ public class CosmosTabsClientTest implements FabricClientGameTest {
 			close(ctx, input);
 		}
 
+		dedicatedServer(ctx, input);
+
 		if (failures.isEmpty()) {
 			LOG.info("[cosmostabs-test] RESULTADO: TODO OK");
 		} else {
@@ -289,14 +296,131 @@ public class CosmosTabsClientTest implements FabricClientGameTest {
 		}
 	}
 
+	/**
+	 * Como en Crafty: servidor dedicado aparte y una pared de 12 cofres, mas pestañas de las que
+	 * entran en la ventana. Comprueba las paginas y que se puedan separar dos ventanas.
+	 */
+	private void dedicatedServer(ClientGameTestContext ctx, TestInput input) {
+		// Desde 26.x un servidor nuevo trae white-list=true: sin esto el jugador de prueba queda
+		// afuera ("You are not white-listed") y la prueba falla sin probar nada del mod.
+		Properties props = new Properties();
+		props.setProperty("white-list", "false");
+		props.setProperty("enforce-whitelist", "false");
+		try (TestDedicatedServerContext server = ctx.worldBuilder().createServer(props);
+				TestDedicatedServerConnection conn = server.connect()) {
+			conn.waitForChunksRender();
+			BlockPos p = server.computeOnServer(s -> s.getPlayerList().getPlayers().getFirst().blockPosition());
+			cmd(server, "fill %s %s minecraft:air", p.offset(-4, 0, -4), p.offset(4, 3, 4));
+			cmd(server, "fill %s %s minecraft:stone", p.offset(-4, -1, -4), p.offset(4, -1, 4));
+			cmd(server, "tp @a %d %d %d -90 0", p.getX(), p.getY(), p.getZ());
+			cmd(server, "time set noon");
+			// Pared de 4 x 3 cofres sueltos delante del jugador (mirando a +X).
+			BlockPos middle = null;
+			int n = 0;
+			for (int y = 2; y >= 0; y--) {
+				for (int z = -2; z <= 1; z++) {
+					BlockPos pos = p.offset(2, y, z);
+					cmd(server, "setblock %s minecraft:chest[facing=west]{CustomName:\"Pared %d\"}", pos, ++n);
+					if (y == 1 && z == 0) {
+						middle = pos;
+					}
+				}
+			}
+			conn.waitForChunksRender();
+			ctx.waitTicks(20);
+			screenshot(ctx, "servidor-pared-de-cofres");
+
+			open(ctx, input, middle, null);
+			waitSoft(ctx, mc -> tabs(mc).size() >= 12, 100);
+			List<TabsPayload.Tab> tabs = ctx.computeOnClient(CosmosTabsClientTest::tabs);
+			screenshot(ctx, "servidor-pagina-actual");
+			check(tabs.size() == 12, "servidor dedicado: la pared de 12 cofres tiene 12 pestañas", names(tabs));
+			if (tabs.size() != 12) {
+				close(ctx, input);
+				return;
+			}
+
+			// 6 pestañas por pagina en un cofre (176 px): flechas justo despues de la sexta.
+			int[] w = window(ctx);
+			int arrowsX = w[0] + 6 * (TAB_W + 1);
+			int current = -1;
+			for (int i = 0; i < tabs.size(); i++) {
+				if (tabs.get(i).current()) {
+					current = i;
+				}
+			}
+			// Ir a la pagina que no es la del cofre abierto y abrir su primera pestaña.
+			boolean toNext = current < 6;
+			clickGui(ctx, input, arrowsX + (toNext ? 16 : 5), w[1] - 10, InputConstants.MOUSE_BUTTON_LEFT);
+			ctx.waitTicks(5);
+			screenshot(ctx, "servidor-otra-pagina");
+			int target = toNext ? 6 : 0;
+			String targetName = tabs.get(target).name().getString();
+			clickGui(ctx, input, w[0] + TAB_W / 2, w[1] - 10, InputConstants.MOUSE_BUTTON_LEFT);
+			boolean switched = waitSoft(ctx, mc -> title(mc).equals(targetName), 100);
+			ctx.waitTicks(10);
+			screenshot(ctx, "servidor-cofre-de-otra-pagina");
+			check(switched, "con las flechas se llega a " + targetName + " de la otra pagina",
+					"titulo=" + ctx.computeOnClient(CosmosTabsClientTest::title));
+
+			// Separar la pestaña de al lado (misma pagina que el cofre abierto) en otra ventana.
+			int[] wa = window(ctx);
+			String sideName = tabs.get(target + 1).name().getString();
+			int startX = wa[0] + (TAB_W + 1) + TAB_W / 2;
+			int startY = wa[1] - 10;
+			moveGui(ctx, input, startX, startY);
+			ctx.waitTick();
+			input.holdMouse(InputConstants.MOUSE_BUTTON_LEFT);
+			ctx.waitTick();
+			for (int i = 1; i <= 10; i++) {
+				moveGui(ctx, input, startX + 20 * i, startY + 6 * i);
+				ctx.waitTick();
+			}
+			input.releaseMouse(InputConstants.MOUSE_BUTTON_LEFT);
+			boolean dual = waitSoft(ctx, mc -> mc.gui.screen() instanceof DualContainerScreen, 100);
+			ctx.waitTicks(10);
+			screenshot(ctx, "servidor-dos-ventanas");
+			String sideTitle = ctx.computeOnClient(mc -> mc.gui.screen() instanceof DualContainerScreen s
+					? s.getMenu().sideTitle().getString() : "-");
+			check(dual && sideTitle.equals(sideName), "servidor dedicado: arrastrar " + sideName + " afuera abre dos ventanas",
+					"doble=" + dual + " separada=" + sideTitle + " pantalla="
+							+ ctx.computeOnClient(mc -> mc.gui.screen() == null ? "ninguna" : mc.gui.screen().getClass().getSimpleName()));
+
+			// Tapas: el recuento de cada 5 ticks tiene que ver la ventana doble, y al cerrar volver a 0.
+			BlockPos mainPos = wallPos(p, target);
+			BlockPos sidePos = wallPos(p, target + 1);
+			ctx.waitTicks(20);
+			int[] openWhile = server.computeOnServer(s -> new int[] {
+					ChestBlockEntity.getOpenCount(s.overworld(), mainPos), ChestBlockEntity.getOpenCount(s.overworld(), sidePos)});
+			check(openWhile[0] == 1 && openWhile[1] == 1, "con dos ventanas los dos cofres siguen abiertos (tapas)",
+					"abiertos=" + openWhile[0] + "," + openWhile[1]);
+			close(ctx, input);
+			ctx.waitTicks(20);
+			int[] openAfter = server.computeOnServer(s -> new int[] {
+					ChestBlockEntity.getOpenCount(s.overworld(), mainPos), ChestBlockEntity.getOpenCount(s.overworld(), sidePos)});
+			screenshot(ctx, "servidor-tapas-cerradas");
+			check(openAfter[0] == 0 && openAfter[1] == 0, "al cerrar las dos ventanas las tapas se cierran (contador en 0)",
+					"abiertos=" + openAfter[0] + "," + openAfter[1]);
+		}
+	}
+
 	// ---------- ayudas ----------
 
+	/** Posicion del cofre que ocupa el lugar {@code index} en las pestañas de la pared (arriba-abajo, luego por z). */
+	private static BlockPos wallPos(BlockPos p, int index) {
+		return p.offset(2, 2 - index / 4, -2 + index % 4);
+	}
+
 	private static void cmd(TestSingleplayerContext sp, String format, Object... args) {
+		cmd(sp.getServer(), format, args);
+	}
+
+	private static void cmd(TestServerContext server, String format, Object... args) {
 		Object[] formatted = new Object[args.length];
 		for (int i = 0; i < args.length; i++) {
 			formatted[i] = args[i] instanceof BlockPos b ? b.getX() + " " + b.getY() + " " + b.getZ() : args[i];
 		}
-		sp.getServer().runCommand(String.format(format, formatted));
+		server.runCommand(String.format(format, formatted));
 	}
 
 	private void open(ClientGameTestContext ctx, TestInput input, BlockPos pos, String expectedTitle) {

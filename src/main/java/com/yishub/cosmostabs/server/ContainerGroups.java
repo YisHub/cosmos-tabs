@@ -13,7 +13,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
-import net.fabricmc.fabric.api.menu.v1.ExtendedMenuProvider;
+import com.yishub.cosmostabs.net.DualOpenPayload;
+import net.minecraft.world.MenuProvider;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -45,9 +46,13 @@ import net.minecraft.world.phys.Vec3;
  * contenedores del grupo a la vez (DualContainerMenu).
  */
 public final class ContainerGroups {
-	private static final int MAX_TABS = 9;
-	/** Tope de bloques a recorrer al buscar el grupo, para que una pared enorme no cueste de mas. */
-	private static final int MAX_SCAN = 64;
+	/** Maximo de contenedores (pestañas) de un grupo; el cliente los reparte en paginas. */
+	private static final int MAX_TABS = 64;
+	/**
+	 * Tope de bloques a recorrer al buscar el grupo, para que una pared enorme no cueste de mas.
+	 * Holgado respecto a MAX_TABS porque un cofre doble son dos bloques.
+	 */
+	private static final int MAX_SCAN = 4 * MAX_TABS;
 	private static final double RANGE_BUFFER = 4.0;
 
 	/** Contenedor principal que cada jugador tiene abierto (forma canonica). */
@@ -180,6 +185,11 @@ public final class ContainerGroups {
 	}
 
 	private static void openDual(ServerPlayer player, ServerLevel level, BlockPos main, BlockPos side) {
+		// Antes de tocar nada (abrir los contenedores genera su botin): el cliente tiene que saber abrirlo.
+		if (!ServerPlayNetworking.canSend(player, DualOpenPayload.TYPE)) {
+			player.sendOverlayMessage(Component.literal("Tu versión de Cosmos Tabs no admite dos ventanas: actualizala"));
+			return;
+		}
 		Container mainContainer = ItemClipboard.containerAt(player, level, main);
 		Container sideContainer = ItemClipboard.containerAt(player, level, side);
 		if (mainContainer == null || sideContainer == null || mainContainer == sideContainer) {
@@ -187,12 +197,7 @@ public final class ContainerGroups {
 		}
 		Component mainTitle = nameOf(level, main);
 		Component sideTitle = nameOf(level, side);
-		player.openMenu(new ExtendedMenuProvider<DualContainerMenu.Data>() {
-			@Override
-			public DualContainerMenu.Data getScreenOpeningData(ServerPlayer p) {
-				return new DualContainerMenu.Data(mainContainer.getContainerSize(), sideContainer.getContainerSize(), sideTitle);
-			}
-
+		player.openMenu(new MenuProvider() {
 			@Override
 			public Component getDisplayName() {
 				return mainTitle;
@@ -200,6 +205,12 @@ public final class ContainerGroups {
 
 			@Override
 			public AbstractContainerMenu createMenu(int id, Inventory inventory, Player p) {
+				// Se avisa antes de que salga el paquete de apertura (que dira "cofre grande").
+				ServerPlayNetworking.send(player, new DualOpenPayload(id, mainContainer.getContainerSize(),
+						sideContainer.getContainerSize(), sideTitle));
+				// El cofre de Ender abre la tapa (y el recuento lo reconoce) solo si sabe cual bloque es.
+				markEnderChest(inventory, level, main);
+				markEnderChest(inventory, level, side);
 				return new DualContainerMenu(id, inventory, mainContainer, sideContainer, sideTitle);
 			}
 		});
@@ -207,6 +218,12 @@ public final class ContainerGroups {
 			CURRENT.put(player.getUUID(), main);
 			SIDE.put(player.getUUID(), side);
 			sendTabs(player, main);
+		}
+	}
+
+	private static void markEnderChest(Inventory inventory, ServerLevel level, BlockPos pos) {
+		if (level.getBlockEntity(pos) instanceof EnderChestBlockEntity ender) {
+			inventory.player.getEnderChestInventory().setActiveChest(ender);
 		}
 	}
 
@@ -220,7 +237,7 @@ public final class ContainerGroups {
 		ArrayDeque<BlockPos> queue = new ArrayDeque<>();
 		queue.add(start);
 		seen.add(start);
-		while (!queue.isEmpty() && seen.size() <= MAX_SCAN) {
+		while (!queue.isEmpty() && found.size() < MAX_TABS && seen.size() <= MAX_SCAN) {
 			BlockPos pos = queue.poll();
 			found.add(canonical(level, pos));
 			for (Direction dir : Direction.values()) {
@@ -250,9 +267,6 @@ public final class ContainerGroups {
 		BlockPos side = SIDE.get(player.getUUID());
 		List<TabsPayload.Tab> tabs = new ArrayList<>();
 		for (BlockPos pos : group(level, current)) {
-			if (tabs.size() >= MAX_TABS) {
-				break;
-			}
 			if (!pos.equals(current) && !isAvailable(player, level, pos)) {
 				continue;
 			}

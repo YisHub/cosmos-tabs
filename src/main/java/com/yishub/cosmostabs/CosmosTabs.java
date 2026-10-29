@@ -1,9 +1,9 @@
 package com.yishub.cosmostabs;
 
-import com.yishub.cosmostabs.menu.CosmosMenus;
 import com.yishub.cosmostabs.net.AttachTabPayload;
 import com.yishub.cosmostabs.net.CutItemsPayload;
 import com.yishub.cosmostabs.net.DetachTabPayload;
+import com.yishub.cosmostabs.net.DualOpenPayload;
 import com.yishub.cosmostabs.net.PasteItemsPayload;
 import com.yishub.cosmostabs.net.SwitchTabPayload;
 import com.yishub.cosmostabs.net.TabsPayload;
@@ -36,7 +36,7 @@ public class CosmosTabs implements ModInitializer {
 		PayloadTypeRegistry.serverboundPlay().register(PasteItemsPayload.TYPE, PasteItemsPayload.STREAM_CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(DetachTabPayload.TYPE, DetachTabPayload.STREAM_CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(AttachTabPayload.TYPE, AttachTabPayload.STREAM_CODEC);
-		CosmosMenus.init();
+		PayloadTypeRegistry.clientboundPlay().register(DualOpenPayload.TYPE, DualOpenPayload.STREAM_CODEC);
 
 		ServerPlayNetworking.registerGlobalReceiver(SwitchTabPayload.TYPE,
 				(payload, context) -> ContainerGroups.switchTo(context.player(), payload.pos()));
