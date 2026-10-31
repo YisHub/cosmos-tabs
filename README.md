@@ -25,6 +25,9 @@ ponen su propia pantalla (por ejemplo Cinematic Interactions).
 Necesita **Fabric Loader ≥ 0.20.1** y **Fabric API**. Descarga el `.jar` de
 [Releases](../../releases/latest) y ponlo en la carpeta `mods`.
 
+También viene incluido en el pack [Cosmos 26.3](https://github.com/YisHub/cosmos-minecraft-installer)
+(instalador para Windows), que siempre trae la última versión.
+
 - **Cliente y servidor**: para pestañas, dos ventanas y cortar/pegar, el mod tiene que estar en
   los dos. Con el mod solo en el cliente, la ventana se puede mover pero no hay pestañas.
 - **Jugadores sin el mod** pueden entrar a un servidor que lo tiene: ven los cofres normales.
